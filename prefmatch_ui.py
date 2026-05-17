@@ -27,7 +27,7 @@ class PrefmatchUI:
         self.person_name_vars: list[tk.StringVar] = []
         self.group_name_vars: list[tk.StringVar] = []
         self.preference_rows: list[list[int]] = []
-        self.preference_widgets: list[ttk.Combobox] = []
+        self.preference_value_vars: list[tk.StringVar] = []
         self.preference_listbox: tk.Listbox | None = None
         self.person_name_listbox: tk.Listbox | None = None
         self.group_name_listbox: tk.Listbox | None = None
@@ -577,7 +577,7 @@ class PrefmatchUI:
         return group_index
 
     def sync_current_preferences_from_editor(self) -> None:
-        if not self.preference_widgets:
+        if not self.preference_value_vars:
             return
 
         try:
@@ -594,9 +594,9 @@ class PrefmatchUI:
         seen: set[int] = set()
         updated_row: list[int] = []
 
-        for pref, combo in enumerate(self.preference_widgets):
+        for pref, value_var in enumerate(self.preference_value_vars):
             group_index = self.parse_group_display_value(
-                combo.get().strip(), group_name_to_index, person_name, pref
+                value_var.get().strip(), group_name_to_index, person_name, pref
             )
             if group_index in seen:
                 raise ValueError(f"{person_name} enthält die Gruppe {group_names[group_index]} doppelt.")
@@ -606,16 +606,15 @@ class PrefmatchUI:
         self.preference_rows[self.selected_person_index] = updated_row
 
     def populate_preference_editor(self) -> None:
-        if not self.preference_widgets:
+        if not self.preference_value_vars:
             return
 
         try:
             person_names = self.collect_person_names()
             group_names = self.collect_group_names()
         except ValueError:
-            for combo in self.preference_widgets:
-                combo.configure(values=())
-                combo.set("")
+            for value_var in self.preference_value_vars:
+                value_var.set("")
             return
 
         if not person_names:
@@ -630,12 +629,11 @@ class PrefmatchUI:
 
         group_display_values = self.group_display_values(group_names)
         current_row = self.preference_rows[self.selected_person_index]
-        for pref, combo in enumerate(self.preference_widgets):
-            combo.configure(values=group_display_values)
+        for pref, value_var in enumerate(self.preference_value_vars):
             if pref < len(current_row) and current_row[pref] < len(group_display_values):
-                combo.set(group_display_values[current_row[pref]])
+                value_var.set(group_display_values[current_row[pref]])
             else:
-                combo.set("")
+                value_var.set("")
 
     def on_person_selected(self, _event: tk.Event | None = None) -> None:
         if self.preference_listbox is None:
@@ -751,26 +749,27 @@ class PrefmatchUI:
             (0, 0), window=editor_content, anchor="nw"
         )
 
-        self.preference_widgets = []
+        self.preference_value_vars = []
         group_display_values = self.group_display_values(group_names)
         for pref in range(preference_count):
             ttk.Label(editor_content, text=f"Präferenz {pref + 1}", style="Header.TLabel").grid(
                 row=pref + 1, column=0, sticky="w", padx=(0, 12), pady=6
             )
-            combo = ttk.Combobox(
+            value_var = tk.StringVar()
+            option_menu = ttk.OptionMenu(
                 editor_content,
-                values=group_display_values,
-                state="readonly",
-                width=30,
+                value_var,
+                group_display_values[min(pref, len(group_display_values) - 1)],
+                *group_display_values,
+                command=lambda _value, self=self: self.on_preference_changed(),
             )
-            combo.grid(row=pref + 1, column=1, sticky="ew", pady=6)
-            combo.bind("<<ComboboxSelected>>", self.on_preference_changed)
-            scroll_tag = f"PreferenceScrollCombobox{pref}"
-            combo.bindtags((scroll_tag,) + combo.bindtags())
+            option_menu.grid(row=pref + 1, column=1, sticky="ew", pady=6)
+            scroll_tag = f"PreferenceScrollOptionMenu{pref}"
+            option_menu.bindtags((scroll_tag,) + option_menu.bindtags())
             self.root.bind_class(scroll_tag, "<MouseWheel>", self.on_preference_editor_mousewheel)
             self.root.bind_class(scroll_tag, "<Button-4>", self.on_preference_editor_mousewheel)
             self.root.bind_class(scroll_tag, "<Button-5>", self.on_preference_editor_mousewheel)
-            self.preference_widgets.append(combo)
+            self.preference_value_vars.append(value_var)
 
         self.selected_person_index = min(self.selected_person_index, max(0, len(person_names) - 1))
         self.refresh_preference_views()
