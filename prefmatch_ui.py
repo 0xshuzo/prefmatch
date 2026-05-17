@@ -36,10 +36,15 @@ class PrefmatchUI:
         self.selected_person_name_index = 0
         self.selected_group_name_index = 0
         self.active_scroll_canvas: tk.Canvas | None = None
+        self.autosave_after_id: str | None = None
+        self.autosave_status_var = tk.StringVar(value="Gespeichert")
+        self.autosave_spinner: ttk.Progressbar | None = None
+        self.autosave_check_label: ttk.Label | None = None
 
         self.configure_style()
         self.build_layout()
         self.bind_global_scroll()
+        self.bind_autosave()
         self.rebuild_forms()
 
     def configure_style(self) -> None:
@@ -67,6 +72,8 @@ class PrefmatchUI:
         self.style.configure("Surface.TLabel", background=card_background, foreground=text)
         self.style.configure("Section.TLabel", background=card_background, foreground=muted, font=("SF Pro Text", 11, "bold"))
         self.style.configure("Header.TLabel", background=card_background, foreground=muted, font=("SF Pro Text", 11, "bold"))
+        self.style.configure("Saved.TLabel", background=background, foreground="#15803d", font=("SF Pro Text", 12, "bold"))
+        self.style.configure("Saving.TLabel", background=background, foreground=muted, font=("SF Pro Text", 12))
         self.style.configure("TEntry", padding=8)
         self.style.configure("TCombobox", padding=6)
         self.style.configure("TButton", padding=(12, 8))
@@ -93,14 +100,15 @@ class PrefmatchUI:
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(1, weight=1)
 
-        config_frame = ttk.LabelFrame(self.root, text="Parameter", padding=16, style="Card.TLabelframe")
-        config_frame.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 6))
+        config_frame = ttk.LabelFrame(self.root, text="Parameter", padding=12, style="Card.TLabelframe")
+        config_frame.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 4))
         config_frame.columnconfigure(1, weight=1)
+        config_frame.columnconfigure(3, weight=1)
 
-        self.add_labeled_entry(config_frame, 0, "Personen", self.person_count_var)
-        self.add_labeled_entry(config_frame, 1, "Gruppen", self.group_count_var)
-        self.add_labeled_entry(config_frame, 2, "Personen pro Gruppe", self.persons_per_group_var)
-        self.add_labeled_entry(config_frame, 3, "Präferenzen pro Person", self.preference_count_var)
+        self.add_labeled_entry(config_frame, 0, 0, "Personen", self.person_count_var)
+        self.add_labeled_entry(config_frame, 0, 2, "Gruppen", self.group_count_var)
+        self.add_labeled_entry(config_frame, 1, 0, "Personen pro Gruppe", self.persons_per_group_var)
+        self.add_labeled_entry(config_frame, 1, 2, "Präferenzen pro Person", self.preference_count_var)
 
         rebuild_button = ttk.Button(
             config_frame,
@@ -108,10 +116,10 @@ class PrefmatchUI:
             command=self.rebuild_forms,
             style="Accent.TButton",
         )
-        rebuild_button.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        rebuild_button.grid(row=2, column=0, columnspan=4, sticky="ew", pady=(8, 0))
 
         config_buttons = ttk.Frame(config_frame)
-        config_buttons.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        config_buttons.grid(row=3, column=0, columnspan=4, sticky="ew", pady=(8, 0))
         config_buttons.columnconfigure(0, weight=1)
         config_buttons.columnconfigure(1, weight=1)
 
@@ -129,7 +137,7 @@ class PrefmatchUI:
         )
         import_config_button.grid(row=0, column=1, sticky="ew", padx=(6, 0))
 
-        content_frame = ttk.Frame(self.root, padding=(12, 6, 12, 6))
+        content_frame = ttk.Frame(self.root, padding=(12, 4, 12, 8))
         content_frame.grid(row=1, column=0, sticky="nsew")
         content_frame.columnconfigure(0, weight=0, minsize=340)
         content_frame.columnconfigure(1, weight=1, minsize=520)
@@ -173,13 +181,92 @@ class PrefmatchUI:
         run_frame.grid(row=2, column=0, sticky="ew")
         run_frame.columnconfigure(0, weight=1)
 
-        run_button = ttk.Button(run_frame, text="Zuordnung finden", command=self.run_program, style="Accent.TButton")
-        run_button.grid(row=0, column=0, sticky="e")
+        status_frame = ttk.Frame(run_frame)
+        status_frame.grid(row=0, column=0, sticky="w")
 
-    def add_labeled_entry(self, parent: ttk.Widget, row: int, label: str, variable: tk.StringVar) -> None:
-        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=2)
+        self.autosave_spinner = ttk.Progressbar(status_frame, mode="indeterminate", length=18)
+        self.autosave_check_label = ttk.Label(status_frame, text="✓", style="Saved.TLabel")
+        self.autosave_check_label.grid(row=0, column=0, sticky="w")
+
+        self.autosave_label = ttk.Label(
+            status_frame,
+            textvariable=self.autosave_status_var,
+            style="Saved.TLabel",
+        )
+        self.autosave_label.grid(row=0, column=1, sticky="w", padx=(8, 0))
+
+        run_button = ttk.Button(run_frame, text="Zuordnung finden", command=self.run_program, style="Accent.TButton")
+        run_button.grid(row=0, column=1, sticky="e")
+
+    def add_labeled_entry(
+        self, parent: ttk.Widget, row: int, column: int, label: str, variable: tk.StringVar
+    ) -> None:
+        ttk.Label(parent, text=label).grid(row=row, column=column, sticky="w", pady=2)
         entry = ttk.Entry(parent, textvariable=variable)
-        entry.grid(row=row, column=1, sticky="ew", pady=2)
+        entry.grid(row=row, column=column + 1, sticky="ew", pady=2, padx=(8, 16 if column == 0 else 0))
+
+    def bind_autosave(self) -> None:
+        for variable in (
+            self.person_count_var,
+            self.group_count_var,
+            self.persons_per_group_var,
+            self.preference_count_var,
+            self.person_name_editor_var,
+            self.group_name_editor_var,
+        ):
+            variable.trace_add("write", self.on_autosave_change)
+
+    def on_autosave_change(self, *_args: object) -> None:
+        self.schedule_autosave()
+
+    def autosave_path(self) -> Path:
+        return Path(__file__).resolve().parent / ".prefmatch_ui_autosave.json"
+
+    def build_autosave_state(self) -> dict[str, object]:
+        return {
+            "person_count": self.person_count_var.get(),
+            "group_count": self.group_count_var.get(),
+            "persons_per_group": self.persons_per_group_var.get(),
+            "preference_count": self.preference_count_var.get(),
+            "person_names": [var.get() for var in self.person_name_vars],
+            "group_names": [var.get() for var in self.group_name_vars],
+            "preferences": [list(row) for row in self.preference_rows],
+        }
+
+    def schedule_autosave(self) -> None:
+        if self.autosave_after_id is not None:
+            self.root.after_cancel(self.autosave_after_id)
+        self.autosave_after_id = self.root.after(250, self.write_autosave)
+
+    def set_autosave_status(self, saved: bool) -> None:
+        if self.autosave_spinner is None or self.autosave_check_label is None:
+            return
+
+        if saved:
+            self.autosave_spinner.stop()
+            self.autosave_spinner.grid_remove()
+            self.autosave_check_label.grid()
+            self.autosave_status_var.set("Gespeichert")
+            self.autosave_label.configure(style="Saved.TLabel")
+        else:
+            self.autosave_check_label.grid_remove()
+            self.autosave_spinner.grid(row=0, column=0, sticky="w")
+            self.autosave_spinner.start(10)
+            self.autosave_status_var.set("Wird gespeichert…")
+            self.autosave_label.configure(style="Saving.TLabel")
+
+    def write_autosave(self) -> None:
+        self.autosave_after_id = None
+        self.set_autosave_status(saved=False)
+        self.root.update_idletasks()
+        try:
+            self.autosave_path().write_text(
+                json.dumps(self.build_autosave_state(), indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
+        self.set_autosave_status(saved=True)
 
     def bind_scroll_area(self, widget: tk.Widget, canvas: tk.Canvas) -> None:
         widget.bind("<Enter>", lambda _event: self.set_active_scroll_canvas(canvas), add="+")
@@ -356,9 +443,11 @@ class PrefmatchUI:
         )
         self.refresh_name_views()
         self.rebuild_preferences(preference_count)
+        self.schedule_autosave()
 
     def on_names_changed(self, *_args: object) -> None:
         self.refresh_preference_views()
+        self.schedule_autosave()
 
     def refresh_name_listbox(self, listbox: tk.Listbox | None, names: list[str], selected_index: int) -> None:
         if listbox is None:
@@ -601,6 +690,7 @@ class PrefmatchUI:
 
         self.selected_person_index = int(selection[0])
         self.populate_preference_editor()
+        self.schedule_autosave()
 
     def on_preference_changed(self, _event: tk.Event | None = None) -> None:
         try:
@@ -609,6 +699,7 @@ class PrefmatchUI:
             messagebox.showerror("Ungültige Eingabe", str(exc))
             self.populate_preference_editor()
             return
+        self.schedule_autosave()
 
     def refresh_preference_views(self) -> None:
         if self.preference_listbox is None:
@@ -854,6 +945,7 @@ class PrefmatchUI:
             person_count, group_count, preference_count, preference_rows
         )
         self.rebuild_preferences(preference_count)
+        self.schedule_autosave()
     def binary_path(self) -> Path:
         return Path(__file__).resolve().parent / "prefmatch"
 
