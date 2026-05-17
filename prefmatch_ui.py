@@ -275,18 +275,22 @@ class PrefmatchUI:
             return "break"
 
         if getattr(event, "num", None) == 4:
-            delta = -1
+            self.preference_editor_canvas.yview_scroll(-1, "units")
+            return "break"
         elif getattr(event, "num", None) == 5:
-            delta = 1
+            self.preference_editor_canvas.yview_scroll(1, "units")
+            return "break"
         else:
             raw_delta = getattr(event, "delta", 0)
             if raw_delta == 0:
                 return "break"
 
             if sys.platform == "darwin":
-                delta = -int(raw_delta)
-                if delta == 0:
-                    delta = -1 if raw_delta > 0 else 1
+                pixel_delta = -int(raw_delta)
+                if pixel_delta == 0:
+                    pixel_delta = -1 if raw_delta > 0 else 1
+                self.preference_editor_canvas.yview_scroll(pixel_delta, "pixels")
+                return "break"
             elif sys.platform.startswith("win"):
                 delta = -int(raw_delta / 120)
                 if delta == 0:
@@ -761,9 +765,11 @@ class PrefmatchUI:
             )
             combo.grid(row=pref + 1, column=1, sticky="ew", pady=6)
             combo.bind("<<ComboboxSelected>>", self.on_preference_changed)
-            combo.bind("<MouseWheel>", self.on_preference_editor_mousewheel)
-            combo.bind("<Button-4>", self.on_preference_editor_mousewheel)
-            combo.bind("<Button-5>", self.on_preference_editor_mousewheel)
+            scroll_tag = f"PreferenceScrollCombobox{pref}"
+            combo.bindtags((scroll_tag,) + combo.bindtags())
+            self.root.bind_class(scroll_tag, "<MouseWheel>", self.on_preference_editor_mousewheel)
+            self.root.bind_class(scroll_tag, "<Button-4>", self.on_preference_editor_mousewheel)
+            self.root.bind_class(scroll_tag, "<Button-5>", self.on_preference_editor_mousewheel)
             self.preference_widgets.append(combo)
 
         self.selected_person_index = min(self.selected_person_index, max(0, len(person_names) - 1))
