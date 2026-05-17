@@ -40,6 +40,8 @@ class PrefmatchUI:
         self.autosave_status_var = tk.StringVar(value="Gespeichert")
         self.autosave_spinner: ttk.Progressbar | None = None
         self.autosave_check_label: ttk.Label | None = None
+        self.preference_editor_canvas: tk.Canvas | None = None
+        self.preference_editor_canvas_window: int | None = None
 
         self.configure_style()
         self.build_layout()
@@ -259,6 +261,14 @@ class PrefmatchUI:
             raise ValueError(f"{field_name} muss größer als 0 sein.")
 
         return parsed
+
+    def update_preference_editor_scroll_region(self, _event: tk.Event) -> None:
+        if self.preference_editor_canvas is not None:
+            self.preference_editor_canvas.configure(scrollregion=self.preference_editor_canvas.bbox("all"))
+
+    def resize_preference_editor_canvas_window(self, event: tk.Event) -> None:
+        if self.preference_editor_canvas is not None and self.preference_editor_canvas_window is not None:
+            self.preference_editor_canvas.itemconfigure(self.preference_editor_canvas_window, width=event.width)
 
     def read_dimensions(self) -> tuple[int, int, int, int]:
         person_count = self.parse_positive_int(self.person_count_var.get(), "Personen")
@@ -517,23 +527,21 @@ class PrefmatchUI:
         return rows
 
     def group_display_values(self, group_names: list[str]) -> list[str]:
-        return [f"{index}: {name}" for index, name in enumerate(group_names)]
+        return list(group_names)
 
-    def parse_group_display_value(self, value: str, group_count: int, person_name: str, pref: int) -> int:
+    def parse_group_display_value(
+        self,
+        value: str,
+        group_name_to_index: dict[str, int],
+        person_name: str,
+        pref: int,
+    ) -> int:
         if not value:
             raise ValueError(f"Präferenz {pref + 1} für {person_name} ist leer.")
 
-        index_text, separator, _name = value.partition(":")
-        if separator != ":":
-            raise ValueError(f"Ungültiger Gruppenwert in {person_name}: {value}")
-
-        try:
-            group_index = int(index_text.strip())
-        except ValueError as exc:
-            raise ValueError(f"Ungültiger Gruppenwert in {person_name}: {value}") from exc
-
-        if group_index < 0 or group_index >= group_count:
-            raise ValueError(f"Ungültige Gruppen-ID in Präferenz von {person_name}: {group_index}")
+        group_index = group_name_to_index.get(value)
+        if group_index is None:
+            raise ValueError(f"Unbekannte Gruppe in Präferenz von {person_name}: {value}")
 
         return group_index
 
@@ -551,11 +559,14 @@ class PrefmatchUI:
             return
 
         person_name = person_names[self.selected_person_index]
+        group_name_to_index = {group_name: index for index, group_name in enumerate(group_names)}
         seen: set[int] = set()
         updated_row: list[int] = []
 
         for pref, combo in enumerate(self.preference_widgets):
-            group_index = self.parse_group_display_value(combo.get().strip(), len(group_names), person_name, pref)
+            group_index = self.parse_group_display_value(
+                combo.get().strip(), group_name_to_index, person_name, pref
+            )
             if group_index in seen:
                 raise ValueError(f"{person_name} enthält die Gruppe {group_names[group_index]} doppelt.")
             seen.add(group_index)
@@ -686,18 +697,37 @@ class PrefmatchUI:
 
         editor_frame = ttk.Frame(self.preference_container, style="Surface.TFrame")
         editor_frame.grid(row=1, column=1, sticky="nsew")
-        editor_frame.columnconfigure(1, weight=1)
+        editor_frame.columnconfigure(0, weight=1)
+        editor_frame.rowconfigure(1, weight=1)
 
-        ttk.Label(editor_frame, text="Präferenzen", style="Section.TLabel").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+        ttk.Label(editor_frame, text="Präferenzen", style="Section.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
+
+        self.preference_editor_canvas = tk.Canvas(editor_frame, highlightthickness=0, bg="#ffffff")
+        self.preference_editor_canvas.grid(row=1, column=0, sticky="nsew")
+        editor_scrollbar = ttk.Scrollbar(
+            editor_frame,
+            orient="vertical",
+            command=self.preference_editor_canvas.yview,
+        )
+        editor_scrollbar.grid(row=1, column=1, sticky="ns")
+        self.preference_editor_canvas.configure(yscrollcommand=editor_scrollbar.set)
+
+        editor_content = ttk.Frame(self.preference_editor_canvas, style="Surface.TFrame")
+        editor_content.columnconfigure(1, weight=1)
+        editor_content.bind("<Configure>", self.update_preference_editor_scroll_region)
+        self.preference_editor_canvas.bind("<Configure>", self.resize_preference_editor_canvas_window)
+        self.preference_editor_canvas_window = self.preference_editor_canvas.create_window(
+            (0, 0), window=editor_content, anchor="nw"
+        )
 
         self.preference_widgets = []
         group_display_values = self.group_display_values(group_names)
         for pref in range(preference_count):
-            ttk.Label(editor_frame, text=f"Präferenz {pref + 1}", style="Header.TLabel").grid(
+            ttk.Label(editor_content, text=f"Präferenz {pref + 1}", style="Header.TLabel").grid(
                 row=pref + 1, column=0, sticky="w", padx=(0, 12), pady=6
             )
             combo = ttk.Combobox(
-                editor_frame,
+                editor_content,
                 values=group_display_values,
                 state="readonly",
                 width=30,
