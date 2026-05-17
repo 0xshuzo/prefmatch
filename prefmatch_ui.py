@@ -43,10 +43,12 @@ class PrefmatchUI:
         self.preference_editor_canvas: tk.Canvas | None = None
         self.preference_editor_canvas_window: int | None = None
         self.mousewheel_tag_counter = 0
+        self.active_mousewheel_target: tk.Widget | None = None
 
         self.configure_style()
         self.build_layout()
         self.bind_autosave()
+        self.bind_global_mousewheel()
         self.rebuild_forms()
 
     def configure_style(self) -> None:
@@ -275,9 +277,33 @@ class PrefmatchUI:
         tag = f"MousewheelRedirect{self.mousewheel_tag_counter}"
         self.mousewheel_tag_counter += 1
         widget.bindtags((tag,) + widget.bindtags())
+        widget.bind("<Enter>", lambda _event, current_target=target: self.set_active_mousewheel_target(current_target), add="+")
+        widget.bind("<Leave>", lambda _event, current_target=target: self.clear_active_mousewheel_target(current_target), add="+")
         self.root.bind_class(tag, "<MouseWheel>", lambda event, current_target=target: self.on_mousewheel_target(event, current_target))
         self.root.bind_class(tag, "<Button-4>", lambda event, current_target=target: self.on_mousewheel_target(event, current_target))
         self.root.bind_class(tag, "<Button-5>", lambda event, current_target=target: self.on_mousewheel_target(event, current_target))
+
+    def bind_mousewheel_redirect_recursive(self, widget: tk.Widget, target: tk.Widget) -> None:
+        self.bind_mousewheel_redirect(widget, target)
+        for child in widget.winfo_children():
+            self.bind_mousewheel_redirect_recursive(child, target)
+
+    def bind_global_mousewheel(self) -> None:
+        self.root.bind_all("<MouseWheel>", self.on_global_mousewheel, add="+")
+        self.root.bind_all("<Button-4>", self.on_global_mousewheel, add="+")
+        self.root.bind_all("<Button-5>", self.on_global_mousewheel, add="+")
+
+    def set_active_mousewheel_target(self, target: tk.Widget) -> None:
+        self.active_mousewheel_target = target
+
+    def clear_active_mousewheel_target(self, target: tk.Widget) -> None:
+        if self.active_mousewheel_target is target:
+            self.active_mousewheel_target = None
+
+    def on_global_mousewheel(self, event: tk.Event) -> str | None:
+        if self.active_mousewheel_target is None:
+            return None
+        return self.on_mousewheel_target(event, self.active_mousewheel_target)
 
     def on_mousewheel_target(self, event: tk.Event, target: tk.Widget) -> str:
         if not target.winfo_exists():
@@ -300,6 +326,17 @@ class PrefmatchUI:
                     if pixel_delta == 0:
                         pixel_delta = -1 if raw_delta > 0 else 1
                     target.yview_scroll(pixel_delta, "pixels")
+                elif isinstance(target, tk.Listbox):
+                    pixel_delta = -int(raw_delta)
+                    if pixel_delta == 0:
+                        pixel_delta = -1 if raw_delta > 0 else 1
+                    visible_row = target.nearest(0)
+                    bbox = target.bbox(visible_row)
+                    row_height = bbox[3] if bbox and len(bbox) >= 4 and bbox[3] > 0 else 20
+                    total_height = max(target.size() * row_height, 1)
+                    current_fraction = target.yview()[0]
+                    new_fraction = current_fraction + (pixel_delta / total_height)
+                    target.yview_moveto(min(max(new_fraction, 0.0), 1.0))
                 else:
                     step = -1 if raw_delta > 0 else 1
                     target.yview_scroll(step, "units")
@@ -781,9 +818,10 @@ class PrefmatchUI:
                 command=lambda _value, self=self: self.on_preference_changed(),
             )
             option_menu.grid(row=pref + 1, column=1, sticky="ew", pady=6)
-            if self.preference_editor_canvas is not None:
-                self.bind_mousewheel_redirect(option_menu, self.preference_editor_canvas)
             self.preference_value_vars.append(value_var)
+
+        if self.preference_editor_canvas is not None:
+            self.bind_mousewheel_redirect_recursive(editor_content, self.preference_editor_canvas)
 
         self.selected_person_index = min(self.selected_person_index, max(0, len(person_names) - 1))
         self.refresh_preference_views()
