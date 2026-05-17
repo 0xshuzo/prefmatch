@@ -6,6 +6,7 @@ import json
 import subprocess
 import sys
 import tkinter as tk
+import zipfile
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from xml.sax.saxutils import escape
@@ -1016,44 +1017,105 @@ class PrefmatchUI:
         target = filedialog.asksaveasfilename(
             parent=self.root,
             title="Zuordnung exportieren",
-            defaultextension=".xml",
-            filetypes=[("Excel XML", "*.xml"), ("Alle Dateien", "*.*")],
+            defaultextension=".xlsx",
+            filetypes=[("Excel-Arbeitsmappe", "*.xlsx"), ("Alle Dateien", "*.*")],
         )
         if not target:
             return
 
-        rows_xml = [
-            "<Row>"
-            "<Cell><Data ss:Type=\"String\">Person</Data></Cell>"
-            "<Cell><Data ss:Type=\"String\">Gruppe</Data></Cell>"
-            "</Row>"
-        ]
+        rows = [("Person", "Gruppe")]
+        rows.extend((person_name, group_name) for person_name, group_name, _is_fallback in assignment_rows)
+        self.write_xlsx(Path(target), rows)
+        messagebox.showinfo("Export", f"Zuordnung exportiert:\n{target}")
 
-        for person_name, group_name, _is_fallback in assignment_rows:
-            rows_xml.append(
-                "<Row>"
-                f"<Cell><Data ss:Type=\"String\">{escape(person_name)}</Data></Cell>"
-                f"<Cell><Data ss:Type=\"String\">{escape(group_name)}</Data></Cell>"
-                "</Row>"
+    def write_xlsx(self, target: Path, rows: list[tuple[str, str]]) -> None:
+        sheet_rows: list[str] = []
+        for row_index, (person_name, group_name) in enumerate(rows, start=1):
+            sheet_rows.append(
+                "<row r=\"{row}\">"
+                "<c r=\"A{row}\" t=\"inlineStr\"><is><t>{person}</t></is></c>"
+                "<c r=\"B{row}\" t=\"inlineStr\"><is><t>{group}</t></is></c>"
+                "</row>".format(
+                    row=row_index,
+                    person=escape(person_name),
+                    group=escape(group_name),
+                )
             )
 
-        xml = (
-            "<?xml version=\"1.0\"?>\n"
-            "<?mso-application progid=\"Excel.Sheet\"?>\n"
-            "<Workbook xmlns=\"urn:schemas-microsoft-com:office:spreadsheet\"\n"
-            " xmlns:o=\"urn:schemas-microsoft-com:office:office\"\n"
-            " xmlns:x=\"urn:schemas-microsoft-com:office:excel\"\n"
-            " xmlns:ss=\"urn:schemas-microsoft-com:office:spreadsheet\">\n"
-            " <Worksheet ss:Name=\"Zuordnung\">\n"
-            "  <Table>\n"
-            f"   {' '.join(rows_xml)}\n"
-            "  </Table>\n"
-            " </Worksheet>\n"
-            "</Workbook>\n"
+        sheet_xml = (
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+            "<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">"
+            "<sheetData>"
+            f"{''.join(sheet_rows)}"
+            "</sheetData>"
+            "</worksheet>"
         )
 
-        Path(target).write_text(xml, encoding="utf-8")
-        messagebox.showinfo("Export", f"Zuordnung exportiert:\n{target}")
+        workbook_xml = (
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+            "<workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" "
+            "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">"
+            "<sheets><sheet name=\"Zuordnung\" sheetId=\"1\" r:id=\"rId1\"/></sheets>"
+            "</workbook>"
+        )
+
+        workbook_rels_xml = (
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+            "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+            "<Relationship Id=\"rId1\" "
+            "Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" "
+            "Target=\"worksheets/sheet1.xml\"/>"
+            "<Relationship Id=\"rId2\" "
+            "Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" "
+            "Target=\"styles.xml\"/>"
+            "</Relationships>"
+        )
+
+        root_rels_xml = (
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+            "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+            "<Relationship Id=\"rId1\" "
+            "Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" "
+            "Target=\"xl/workbook.xml\"/>"
+            "</Relationships>"
+        )
+
+        content_types_xml = (
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+            "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">"
+            "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>"
+            "<Default Extension=\"xml\" ContentType=\"application/xml\"/>"
+            "<Override PartName=\"/xl/workbook.xml\" "
+            "ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>"
+            "<Override PartName=\"/xl/worksheets/sheet1.xml\" "
+            "ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>"
+            "<Override PartName=\"/xl/styles.xml\" "
+            "ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml\"/>"
+            "</Types>"
+        )
+
+        styles_xml = (
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+            "<styleSheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">"
+            "<fonts count=\"1\"><font><sz val=\"11\"/><name val=\"Calibri\"/></font></fonts>"
+            "<fills count=\"2\">"
+            "<fill><patternFill patternType=\"none\"/></fill>"
+            "<fill><patternFill patternType=\"gray125\"/></fill>"
+            "</fills>"
+            "<borders count=\"1\"><border><left/><right/><top/><bottom/><diagonal/></border></borders>"
+            "<cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs>"
+            "<cellXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/></cellXfs>"
+            "<cellStyles count=\"1\"><cellStyle name=\"Normal\" xfId=\"0\" builtinId=\"0\"/></cellStyles>"
+            "</styleSheet>"
+        )
+
+        with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("[Content_Types].xml", content_types_xml)
+            archive.writestr("_rels/.rels", root_rels_xml)
+            archive.writestr("xl/workbook.xml", workbook_xml)
+            archive.writestr("xl/_rels/workbook.xml.rels", workbook_rels_xml)
+            archive.writestr("xl/worksheets/sheet1.xml", sheet_xml)
+            archive.writestr("xl/styles.xml", styles_xml)
 
     def parse_program_output(self, output: str) -> dict[str, object]:
         max_flow: int | None = None
