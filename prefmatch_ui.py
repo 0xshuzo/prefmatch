@@ -42,6 +42,7 @@ class PrefmatchUI:
         self.autosave_check_label: ttk.Label | None = None
         self.preference_editor_canvas: tk.Canvas | None = None
         self.preference_editor_canvas_window: int | None = None
+        self.mousewheel_tag_counter = 0
 
         self.configure_style()
         self.build_layout()
@@ -270,15 +271,23 @@ class PrefmatchUI:
         if self.preference_editor_canvas is not None and self.preference_editor_canvas_window is not None:
             self.preference_editor_canvas.itemconfigure(self.preference_editor_canvas_window, width=event.width)
 
-    def on_preference_editor_mousewheel(self, event: tk.Event) -> str:
-        if self.preference_editor_canvas is None:
+    def bind_mousewheel_redirect(self, widget: tk.Widget, target: tk.Widget) -> None:
+        tag = f"MousewheelRedirect{self.mousewheel_tag_counter}"
+        self.mousewheel_tag_counter += 1
+        widget.bindtags((tag,) + widget.bindtags())
+        self.root.bind_class(tag, "<MouseWheel>", lambda event, current_target=target: self.on_mousewheel_target(event, current_target))
+        self.root.bind_class(tag, "<Button-4>", lambda event, current_target=target: self.on_mousewheel_target(event, current_target))
+        self.root.bind_class(tag, "<Button-5>", lambda event, current_target=target: self.on_mousewheel_target(event, current_target))
+
+    def on_mousewheel_target(self, event: tk.Event, target: tk.Widget) -> str:
+        if not target.winfo_exists():
             return "break"
 
         if getattr(event, "num", None) == 4:
-            self.preference_editor_canvas.yview_scroll(-1, "units")
+            target.yview_scroll(-1, "units")
             return "break"
         elif getattr(event, "num", None) == 5:
-            self.preference_editor_canvas.yview_scroll(1, "units")
+            target.yview_scroll(1, "units")
             return "break"
         else:
             raw_delta = getattr(event, "delta", 0)
@@ -286,10 +295,14 @@ class PrefmatchUI:
                 return "break"
 
             if sys.platform == "darwin":
-                pixel_delta = -int(raw_delta)
-                if pixel_delta == 0:
-                    pixel_delta = -1 if raw_delta > 0 else 1
-                self.preference_editor_canvas.yview_scroll(pixel_delta, "pixels")
+                if isinstance(target, tk.Canvas):
+                    pixel_delta = -int(raw_delta)
+                    if pixel_delta == 0:
+                        pixel_delta = -1 if raw_delta > 0 else 1
+                    target.yview_scroll(pixel_delta, "pixels")
+                else:
+                    step = -1 if raw_delta > 0 else 1
+                    target.yview_scroll(step, "units")
                 return "break"
             elif sys.platform.startswith("win"):
                 delta = -int(raw_delta / 120)
@@ -298,7 +311,7 @@ class PrefmatchUI:
             else:
                 delta = -1 if raw_delta > 0 else 1
 
-        self.preference_editor_canvas.yview_scroll(delta, "units")
+        target.yview_scroll(delta, "units")
         return "break"
 
     def read_dimensions(self) -> tuple[int, int, int, int]:
@@ -359,6 +372,7 @@ class PrefmatchUI:
         person_scrollbar.grid(row=0, column=1, sticky="ns")
         self.person_name_listbox.configure(yscrollcommand=person_scrollbar.set)
         self.person_name_listbox.bind("<<ListboxSelect>>", self.on_person_name_selected)
+        self.bind_mousewheel_redirect(self.person_name_listbox, self.person_name_listbox)
 
         ttk.Label(names_person_frame, text="Ausgewählte Person", style="Header.TLabel").grid(row=2, column=0, sticky="w", pady=(10, 4))
         person_editor = ttk.Entry(names_person_frame, textvariable=self.person_name_editor_var)
@@ -394,6 +408,7 @@ class PrefmatchUI:
         group_scrollbar.grid(row=0, column=1, sticky="ns")
         self.group_name_listbox.configure(yscrollcommand=group_scrollbar.set)
         self.group_name_listbox.bind("<<ListboxSelect>>", self.on_group_name_selected)
+        self.bind_mousewheel_redirect(self.group_name_listbox, self.group_name_listbox)
 
         ttk.Label(names_group_frame, text="Ausgewählte Gruppe", style="Header.TLabel").grid(row=2, column=0, sticky="w", pady=(10, 4))
         group_editor = ttk.Entry(names_group_frame, textvariable=self.group_name_editor_var)
@@ -723,6 +738,7 @@ class PrefmatchUI:
         person_scrollbar.grid(row=1, column=1, sticky="ns")
         self.preference_listbox.configure(yscrollcommand=person_scrollbar.set)
         self.preference_listbox.bind("<<ListboxSelect>>", self.on_person_selected)
+        self.bind_mousewheel_redirect(self.preference_listbox, self.preference_listbox)
 
         editor_frame = ttk.Frame(self.preference_container, style="Surface.TFrame")
         editor_frame.grid(row=1, column=1, sticky="nsew")
@@ -740,6 +756,7 @@ class PrefmatchUI:
         )
         editor_scrollbar.grid(row=1, column=1, sticky="ns")
         self.preference_editor_canvas.configure(yscrollcommand=editor_scrollbar.set)
+        self.bind_mousewheel_redirect(self.preference_editor_canvas, self.preference_editor_canvas)
 
         editor_content = ttk.Frame(self.preference_editor_canvas, style="Surface.TFrame")
         editor_content.columnconfigure(1, weight=1)
@@ -764,11 +781,8 @@ class PrefmatchUI:
                 command=lambda _value, self=self: self.on_preference_changed(),
             )
             option_menu.grid(row=pref + 1, column=1, sticky="ew", pady=6)
-            scroll_tag = f"PreferenceScrollOptionMenu{pref}"
-            option_menu.bindtags((scroll_tag,) + option_menu.bindtags())
-            self.root.bind_class(scroll_tag, "<MouseWheel>", self.on_preference_editor_mousewheel)
-            self.root.bind_class(scroll_tag, "<Button-4>", self.on_preference_editor_mousewheel)
-            self.root.bind_class(scroll_tag, "<Button-5>", self.on_preference_editor_mousewheel)
+            if self.preference_editor_canvas is not None:
+                self.bind_mousewheel_redirect(option_menu, self.preference_editor_canvas)
             self.preference_value_vars.append(value_var)
 
         self.selected_person_index = min(self.selected_person_index, max(0, len(person_names) - 1))
