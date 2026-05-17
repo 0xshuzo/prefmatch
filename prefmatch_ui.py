@@ -781,45 +781,52 @@ class PrefmatchUI:
         list_frame.columnconfigure(0, weight=1)
         list_frame.rowconfigure(0, weight=1)
 
-        listbox = tk.Listbox(
-            list_frame,
-            exportselection=False,
-            activestyle="none",
-            font=("SF Pro Text", 12),
-        )
-        listbox.grid(row=0, column=0, sticky="nsew")
-        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=listbox.yview)
+        picker_canvas = tk.Canvas(list_frame, highlightthickness=0, bg="#ffffff")
+        picker_canvas.grid(row=0, column=0, sticky="nsew")
+        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=picker_canvas.yview)
         scrollbar.grid(row=0, column=1, sticky="ns")
-        listbox.configure(yscrollcommand=scrollbar.set)
+        picker_canvas.configure(yscrollcommand=scrollbar.set)
+
+        picker_content = ttk.Frame(picker_canvas, style="Surface.TFrame")
+        picker_content.columnconfigure(0, weight=1)
+
+        def update_picker_scroll_region(_event: tk.Event) -> None:
+            picker_canvas.configure(scrollregion=picker_canvas.bbox("all"))
+
+        def resize_picker_canvas_window(event: tk.Event) -> None:
+            picker_canvas.itemconfigure(picker_window, width=event.width)
+
+        picker_content.bind("<Configure>", update_picker_scroll_region)
+        picker_canvas.bind("<Configure>", resize_picker_canvas_window)
+        picker_window = picker_canvas.create_window((0, 0), window=picker_content, anchor="nw")
 
         current_value = self.preference_value_vars[pref_index].get().strip()
-        selected_index = 0
-        for index, group_name in enumerate(group_names):
-            listbox.insert(tk.END, group_name)
-            if group_name == current_value:
-                selected_index = index
-
-        if group_names:
-            listbox.selection_set(selected_index)
-            listbox.activate(selected_index)
-            listbox.see(selected_index)
-
-        self.bind_mousewheel_redirect(listbox, listbox)
+        selected_value = tk.StringVar(value=current_value)
 
         button_row = ttk.Frame(dialog, padding=16)
         button_row.grid(row=2, column=0, sticky="e")
 
         def apply_selection(_event: tk.Event | None = None) -> str | None:
-            selection = listbox.curselection()
-            if not selection:
+            value = selected_value.get().strip()
+            if not value:
                 return "break"
-            self.preference_value_vars[pref_index].set(group_names[int(selection[0])])
+            self.preference_value_vars[pref_index].set(value)
             self.on_preference_changed()
             dialog.destroy()
             return "break"
 
-        listbox.bind("<Double-Button-1>", apply_selection)
-        listbox.bind("<Return>", apply_selection)
+        for index, group_name in enumerate(group_names):
+            row_button = ttk.Button(
+                picker_content,
+                text=group_name,
+                command=lambda current_name=group_name: selected_value.set(current_name),
+            )
+            row_button.grid(row=index, column=0, sticky="ew", pady=2)
+            if group_name == current_value:
+                row_button.state(["pressed"])
+                picker_canvas.after(0, lambda current_index=index: picker_canvas.yview_moveto(max(current_index / max(len(group_names), 1), 0.0)))
+
+        self.bind_mousewheel_redirect_recursive(picker_content, picker_canvas)
 
         ttk.Button(button_row, text="Abbrechen", command=dialog.destroy).grid(row=0, column=0, padx=(0, 8))
         ttk.Button(button_row, text="Übernehmen", command=lambda: apply_selection(), style="Accent.TButton").grid(
