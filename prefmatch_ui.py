@@ -35,7 +35,6 @@ class PrefmatchUI:
         self.selected_person_index = 0
         self.selected_person_name_index = 0
         self.selected_group_name_index = 0
-        self.active_scroll_canvas: tk.Canvas | None = None
         self.autosave_after_id: str | None = None
         self.autosave_status_var = tk.StringVar(value="Gespeichert")
         self.autosave_spinner: ttk.Progressbar | None = None
@@ -43,7 +42,6 @@ class PrefmatchUI:
 
         self.configure_style()
         self.build_layout()
-        self.bind_global_scroll()
         self.bind_autosave()
         self.rebuild_forms()
 
@@ -139,43 +137,25 @@ class PrefmatchUI:
 
         content_frame = ttk.Frame(self.root, padding=(12, 4, 12, 8))
         content_frame.grid(row=1, column=0, sticky="nsew")
-        content_frame.columnconfigure(0, weight=0, minsize=340)
-        content_frame.columnconfigure(1, weight=1, minsize=520)
+        content_frame.columnconfigure(0, weight=2, minsize=360)
+        content_frame.columnconfigure(1, weight=3, minsize=540)
         content_frame.rowconfigure(0, weight=1)
 
         names_frame = ttk.LabelFrame(content_frame, text="Namen", padding=16, style="Card.TLabelframe")
-        names_frame.grid(row=0, column=0, sticky="ns", padx=(0, 6))
+        names_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
         names_frame.columnconfigure(0, weight=1)
         names_frame.rowconfigure(0, weight=1)
 
-        self.names_canvas = tk.Canvas(names_frame, highlightthickness=0, bg="#ffffff")
-        self.names_canvas.grid(row=0, column=0, sticky="nsew")
-        names_scrollbar = ttk.Scrollbar(names_frame, orient="vertical", command=self.names_canvas.yview)
-        names_scrollbar.grid(row=0, column=1, sticky="ns")
-        self.names_canvas.configure(yscrollcommand=names_scrollbar.set)
-
-        self.names_container = ttk.Frame(self.names_canvas, style="Surface.TFrame")
-        self.names_container.bind("<Configure>", self.update_names_scroll_region)
-        self.names_canvas.bind("<Configure>", self.resize_names_canvas_window)
-        self.names_canvas_window = self.names_canvas.create_window((0, 0), window=self.names_container, anchor="nw")
-        self.bind_scroll_area(names_frame, self.names_canvas)
+        self.names_container = ttk.Frame(names_frame, style="Surface.TFrame")
+        self.names_container.grid(row=0, column=0, sticky="nsew")
 
         preferences_frame = ttk.LabelFrame(content_frame, text="Präferenzen", padding=16, style="Card.TLabelframe")
         preferences_frame.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
         preferences_frame.columnconfigure(0, weight=1)
         preferences_frame.rowconfigure(0, weight=1)
 
-        self.preferences_canvas = tk.Canvas(preferences_frame, highlightthickness=0, bg="#ffffff")
-        self.preferences_canvas.grid(row=0, column=0, sticky="nsew")
-        preferences_scrollbar = ttk.Scrollbar(preferences_frame, orient="vertical", command=self.preferences_canvas.yview)
-        preferences_scrollbar.grid(row=0, column=1, sticky="ns")
-        self.preferences_canvas.configure(yscrollcommand=preferences_scrollbar.set)
-
-        self.preference_container = ttk.Frame(self.preferences_canvas, style="Surface.TFrame")
-        self.preference_container.bind("<Configure>", self.update_preferences_scroll_region)
-        self.preferences_canvas.bind("<Configure>", self.resize_preferences_canvas_window)
-        self.preferences_canvas_window = self.preferences_canvas.create_window((0, 0), window=self.preference_container, anchor="nw")
-        self.bind_scroll_area(preferences_frame, self.preferences_canvas)
+        self.preference_container = ttk.Frame(preferences_frame, style="Surface.TFrame")
+        self.preference_container.grid(row=0, column=0, sticky="nsew")
 
         run_frame = ttk.Frame(self.root, padding=(12, 6, 12, 12))
         run_frame.grid(row=2, column=0, sticky="ew")
@@ -268,63 +248,6 @@ class PrefmatchUI:
             pass
         self.set_autosave_status(saved=True)
 
-    def bind_scroll_area(self, widget: tk.Widget, canvas: tk.Canvas) -> None:
-        widget.bind("<Enter>", lambda _event: self.set_active_scroll_canvas(canvas), add="+")
-        widget.bind("<Leave>", lambda _event: self.clear_active_scroll_canvas(canvas), add="+")
-        for child in widget.winfo_children():
-            self.bind_scroll_area(child, canvas)
-
-    def set_active_scroll_canvas(self, canvas: tk.Canvas) -> None:
-        self.active_scroll_canvas = canvas
-
-    def clear_active_scroll_canvas(self, canvas: tk.Canvas) -> None:
-        if self.active_scroll_canvas is canvas:
-            self.active_scroll_canvas = None
-
-    def bind_global_scroll(self) -> None:
-        self.root.bind_all("<MouseWheel>", self.on_mousewheel, add="+")
-        self.root.bind_all("<Button-4>", self.on_mousewheel, add="+")
-        self.root.bind_all("<Button-5>", self.on_mousewheel, add="+")
-
-    def on_mousewheel(self, event: tk.Event) -> str | None:
-        if self.active_scroll_canvas is None:
-            return None
-
-        if getattr(event, "num", None) == 4:
-            delta = -1
-        elif getattr(event, "num", None) == 5:
-            delta = 1
-        else:
-            raw_delta = getattr(event, "delta", 0)
-            if raw_delta == 0:
-                return None
-
-            if sys.platform == "darwin":
-                delta = -int(raw_delta)
-                if delta == 0:
-                    delta = -1 if raw_delta > 0 else 1
-            elif sys.platform.startswith("win"):
-                delta = -int(raw_delta / 120)
-                if delta == 0:
-                    delta = -1 if raw_delta > 0 else 1
-            else:
-                delta = -1 if raw_delta > 0 else 1
-
-        self.active_scroll_canvas.yview_scroll(delta, "units")
-        return "break"
-
-    def update_names_scroll_region(self, _event: tk.Event) -> None:
-        self.names_canvas.configure(scrollregion=self.names_canvas.bbox("all"))
-
-    def resize_names_canvas_window(self, event: tk.Event) -> None:
-        self.names_canvas.itemconfigure(self.names_canvas_window, width=event.width)
-
-    def update_preferences_scroll_region(self, _event: tk.Event) -> None:
-        self.preferences_canvas.configure(scrollregion=self.preferences_canvas.bbox("all"))
-
-    def resize_preferences_canvas_window(self, event: tk.Event) -> None:
-        self.preferences_canvas.itemconfigure(self.preferences_canvas_window, width=event.width)
-
     def parse_positive_int(self, value: str, field_name: str) -> int:
         try:
             parsed = int(value)
@@ -369,6 +292,7 @@ class PrefmatchUI:
         names_person_frame = ttk.LabelFrame(self.names_container, text="Personennamen", padding=10, style="Card.TLabelframe")
         names_person_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
         names_person_frame.columnconfigure(0, weight=1)
+        names_person_frame.rowconfigure(1, weight=1)
 
         for person in range(person_count):
             default_name = old_person_names[person] if person < len(old_person_names) else f"Person {person + 1}"
@@ -377,7 +301,7 @@ class PrefmatchUI:
 
         ttk.Label(names_person_frame, text="Personen", style="Section.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
         person_list_frame = ttk.Frame(names_person_frame, style="Surface.TFrame")
-        person_list_frame.grid(row=1, column=0, sticky="ew")
+        person_list_frame.grid(row=1, column=0, sticky="nsew")
         person_list_frame.columnconfigure(0, weight=1)
         person_list_frame.rowconfigure(0, weight=1)
 
@@ -388,7 +312,7 @@ class PrefmatchUI:
             activestyle="none",
             font=("SF Pro Text", 12),
         )
-        self.person_name_listbox.grid(row=0, column=0, sticky="ew")
+        self.person_name_listbox.grid(row=0, column=0, sticky="nsew")
         person_scrollbar = ttk.Scrollbar(person_list_frame, orient="vertical", command=self.person_name_listbox.yview)
         person_scrollbar.grid(row=0, column=1, sticky="ns")
         self.person_name_listbox.configure(yscrollcommand=person_scrollbar.set)
@@ -403,6 +327,7 @@ class PrefmatchUI:
         names_group_frame = ttk.LabelFrame(self.names_container, text="Gruppennamen", padding=10, style="Card.TLabelframe")
         names_group_frame.grid(row=0, column=1, sticky="nsew", padx=(4, 0))
         names_group_frame.columnconfigure(0, weight=1)
+        names_group_frame.rowconfigure(1, weight=1)
 
         for group in range(group_count):
             default_name = old_group_names[group] if group < len(old_group_names) else f"Gruppe {group + 1}"
@@ -411,7 +336,7 @@ class PrefmatchUI:
 
         ttk.Label(names_group_frame, text="Gruppen", style="Section.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
         group_list_frame = ttk.Frame(names_group_frame, style="Surface.TFrame")
-        group_list_frame.grid(row=1, column=0, sticky="ew")
+        group_list_frame.grid(row=1, column=0, sticky="nsew")
         group_list_frame.columnconfigure(0, weight=1)
         group_list_frame.rowconfigure(0, weight=1)
 
@@ -422,7 +347,7 @@ class PrefmatchUI:
             activestyle="none",
             font=("SF Pro Text", 12),
         )
-        self.group_name_listbox.grid(row=0, column=0, sticky="ew")
+        self.group_name_listbox.grid(row=0, column=0, sticky="nsew")
         group_scrollbar = ttk.Scrollbar(group_list_frame, orient="vertical", command=self.group_name_listbox.yview)
         group_scrollbar.grid(row=0, column=1, sticky="ns")
         self.group_name_listbox.configure(yscrollcommand=group_scrollbar.set)
@@ -436,8 +361,7 @@ class PrefmatchUI:
 
         self.names_container.columnconfigure(0, weight=1)
         self.names_container.columnconfigure(1, weight=1)
-        self.bind_scroll_area(names_person_frame, self.names_canvas)
-        self.bind_scroll_area(names_group_frame, self.names_canvas)
+        self.names_container.rowconfigure(0, weight=1)
         self.preference_rows = self.normalize_preference_rows(
             person_count, group_count, preference_count, self.preference_rows
         )
@@ -741,7 +665,7 @@ class PrefmatchUI:
         ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
 
         person_frame = ttk.Frame(self.preference_container, style="Surface.TFrame")
-        person_frame.grid(row=1, column=0, sticky="nsw", padx=(0, 16))
+        person_frame.grid(row=1, column=0, sticky="nsew", padx=(0, 16))
         person_frame.columnconfigure(0, weight=1)
         person_frame.rowconfigure(1, weight=1)
 
@@ -753,7 +677,7 @@ class PrefmatchUI:
             activestyle="none",
             font=("SF Pro Text", 12),
         )
-        self.preference_listbox.grid(row=1, column=0, sticky="ns")
+        self.preference_listbox.grid(row=1, column=0, sticky="nsew")
         person_scrollbar = ttk.Scrollbar(person_frame, orient="vertical", command=self.preference_listbox.yview)
         person_scrollbar.grid(row=1, column=1, sticky="ns")
         self.preference_listbox.configure(yscrollcommand=person_scrollbar.set)
@@ -781,7 +705,6 @@ class PrefmatchUI:
             combo.bind("<<ComboboxSelected>>", self.on_preference_changed)
             self.preference_widgets.append(combo)
 
-        self.bind_scroll_area(self.preference_container, self.preferences_canvas)
         self.selected_person_index = min(self.selected_person_index, max(0, len(person_names) - 1))
         self.refresh_preference_views()
 
