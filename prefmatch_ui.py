@@ -185,6 +185,15 @@ class PrefmatchUI:
         run_button = ttk.Button(run_frame, text="Zuordnung finden", command=self.run_program, style="Accent.TButton")
         run_button.grid(row=0, column=1, sticky="e")
 
+        footer_label = ttk.Label(
+            self.root,
+            text="Made with ❤️ for Agnes",
+            style="Section.TLabel",
+            anchor="center",
+            justify="center",
+        )
+        footer_label.grid(row=3, column=0, sticky="ew", padx=12, pady=(0, 10))
+
     def add_labeled_entry(
         self, parent: ttk.Widget, row: int, column: int, label: str, variable: tk.StringVar
     ) -> None:
