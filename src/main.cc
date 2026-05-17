@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <exception>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -15,18 +16,21 @@ struct ParsedPreferences {
 	vecvec weights;
 };
 
-void add_edge(vecvec &head, revvecvec &rev, vecvec &capacity, costvecvec &cost, u64 from,
+void add_edge(vecvec &head, revvecvec &rev, boolvecvec &is_forward,
+              vecvec &capacity, costvecvec &cost, u64 from,
               u64 to, u64 forward_capacity, i64 forward_cost) {
 	const u64 forward_pos = head[from].size();
 	const u64 reverse_pos = head[to].size();
 
 	head[from].push_back(to);
 	rev[from].push_back(reverse_pos);
+	is_forward[from].push_back(true);
 	capacity[from].push_back(forward_capacity);
 	cost[from].push_back(forward_cost);
 
 	head[to].push_back(from);
 	rev[to].push_back(forward_pos);
+	is_forward[to].push_back(false);
 	capacity[to].push_back(0);
 	cost[to].push_back(-forward_cost);
 }
@@ -129,33 +133,57 @@ ParsedPreferences parse_preferences(const std::string &encoded_preferences,
 	return parsed;
 }
 
-std::tuple<vecvec, revvecvec, vecvec, costvecvec>
+std::tuple<vecvec, revvecvec, boolvecvec, vecvec, costvecvec>
 build_vectors(u64 person_count, u64 group_count, u64 persons_per_group,
               const ParsedPreferences &preferences) {
 	const u64 num_nodes = person_count + group_count + 2;
 	vecvec head(num_nodes);
 	revvecvec rev(num_nodes);
+	boolvecvec is_forward(num_nodes);
 	vecvec capacity(num_nodes);
 	costvecvec cost(num_nodes);
 
 	for (u64 group = 0; group < group_count; ++group) {
 		const u64 group_node = group + 2;
-		add_edge(head, rev, capacity, cost, group_node, 1, persons_per_group, 0);
+		add_edge(head, rev, is_forward, capacity, cost, group_node, 1, persons_per_group, 0);
 	}
 
 	for (u64 person = 0; person < person_count; ++person) {
 		const u64 person_node = person + group_count + 2;
 
-		add_edge(head, rev, capacity, cost, 0, person_node, 1, 0);
+		add_edge(head, rev, is_forward, capacity, cost, 0, person_node, 1, 0);
 
 		for (u64 pref = 0; pref < preferences.groups[person].size(); ++pref) {
 			const u64 group_node = preferences.groups[person][pref] + 2;
-			add_edge(head, rev, capacity, cost, person_node, group_node, 1,
+			add_edge(head, rev, is_forward, capacity, cost, person_node, group_node, 1,
 			         static_cast<i64>(preferences.weights[person][pref]));
 		}
 	}
 
-	return {head, rev, capacity, cost};
+	return {head, rev, is_forward, capacity, cost};
+}
+
+void complete_person_group_edges(vecvec &head, revvecvec &rev, boolvecvec &is_forward, vecvec &capacity,
+                                 costvecvec &cost, u64 person_count,
+                                 u64 group_count, i64 fallback_cost) {
+	for (u64 person = 0; person < person_count; ++person) {
+		const u64 person_node = person + group_count + 2;
+		std::vector<bool> connected(group_count, false);
+
+		for (u64 edge_pos = 0; edge_pos < head[person_node].size(); ++edge_pos) {
+			const u64 target = head[person_node][edge_pos];
+			if (target >= 2 && target < group_count + 2)
+				connected[target - 2] = true;
+		}
+
+		for (u64 group = 0; group < group_count; ++group) {
+			if (!connected[group]) {
+				const u64 group_node = group + 2;
+				add_edge(head, rev, is_forward, capacity, cost, person_node, group_node, 1,
+				         fallback_cost);
+			}
+		}
+	}
 }
 
 int main(int argc, char **argv) {
@@ -175,13 +203,32 @@ int main(int argc, char **argv) {
 	const ParsedPreferences preferences =
 	    parse_preferences(argv[5], person_count, group_count, preference_count);
 
-	auto [head, rev, capacity, cost] = build_vectors(person_count, group_count,
-	                                                 persons_per_group, preferences);
+	auto [head, rev, is_forward, capacity, cost] = build_vectors(person_count, group_count,
+	                                                             persons_per_group, preferences);
 
-	Graph g(head, rev, capacity, cost);
-	u64 max_flow = g.preflow_push(0, 1);
+	Graph feasibility_graph(head, rev, is_forward, capacity, cost);
+	const u64 max_flow = feasibility_graph.preflow_push(0, 1);
 
-	printf("%llu\n", static_cast<unsigned long long>(max_flow));
+	if (max_flow < person_count) {
+		complete_person_group_edges(head, rev, is_forward, capacity, cost, person_count,
+		                            group_count,
+		                            static_cast<i64>(person_count * preference_count + 1));
+	}
+
+	Graph assignment_graph(head, rev, is_forward, capacity, cost);
+	auto [flow, cost_ges] = assignment_graph.successive_shortest_paths_with_potentials(0, 1, person_count);
+	const std::vector<u64> assignment =
+	    assignment_graph.extract_assignment(flow, person_count, group_count);
+
+	std::printf("MAX_FLOW %llu\n", static_cast<unsigned long long>(max_flow));
+	std::printf("TOTAL_COST %lld\n", static_cast<long long>(cost_ges));
+	for (u64 person = 0; person < person_count; ++person) {
+		if (assignment[person] != std::numeric_limits<u64>::max()) {
+			std::printf("ASSIGNMENT %llu %llu\n",
+			            static_cast<unsigned long long>(person),
+			            static_cast<unsigned long long>(assignment[person]));
+		}
+	}
 
 	return 0;
 }
