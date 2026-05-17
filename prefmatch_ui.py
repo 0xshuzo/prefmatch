@@ -28,7 +28,6 @@ class PrefmatchUI:
         self.group_name_vars: list[tk.StringVar] = []
         self.preference_rows: list[list[int]] = []
         self.preference_value_vars: list[tk.StringVar] = []
-        self.preference_buttons: list[ttk.Button] = []
         self.preference_listbox: tk.Listbox | None = None
         self.person_name_listbox: tk.Listbox | None = None
         self.group_name_listbox: tk.Listbox | None = None
@@ -750,89 +749,6 @@ class PrefmatchUI:
             return
         self.schedule_autosave()
 
-    def open_preference_picker(self, pref_index: int) -> None:
-        try:
-            group_names = self.collect_group_names()
-        except ValueError as exc:
-            messagebox.showerror("Ungültige Eingabe", str(exc))
-            return
-
-        if pref_index < 0 or pref_index >= len(self.preference_value_vars):
-            return
-
-        dialog = tk.Toplevel(self.root)
-        dialog.title(f"Präferenz {pref_index + 1} wählen")
-        dialog.transient(self.root)
-        dialog.grab_set()
-        dialog.geometry("420x420")
-        dialog.minsize(320, 320)
-        dialog.configure(bg="#f5f7fb")
-        dialog.columnconfigure(0, weight=1)
-        dialog.rowconfigure(1, weight=1)
-
-        ttk.Label(
-            dialog,
-            text=f"Gruppe für Präferenz {pref_index + 1} auswählen",
-            style="Section.TLabel",
-        ).grid(row=0, column=0, sticky="w", padx=16, pady=(16, 8))
-
-        list_frame = ttk.Frame(dialog, padding=(16, 0, 16, 0))
-        list_frame.grid(row=1, column=0, sticky="nsew")
-        list_frame.columnconfigure(0, weight=1)
-        list_frame.rowconfigure(0, weight=1)
-
-        picker_canvas = tk.Canvas(list_frame, highlightthickness=0, bg="#ffffff")
-        picker_canvas.grid(row=0, column=0, sticky="nsew")
-        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=picker_canvas.yview)
-        scrollbar.grid(row=0, column=1, sticky="ns")
-        picker_canvas.configure(yscrollcommand=scrollbar.set)
-
-        picker_content = ttk.Frame(picker_canvas, style="Surface.TFrame")
-        picker_content.columnconfigure(0, weight=1)
-
-        def update_picker_scroll_region(_event: tk.Event) -> None:
-            picker_canvas.configure(scrollregion=picker_canvas.bbox("all"))
-
-        def resize_picker_canvas_window(event: tk.Event) -> None:
-            picker_canvas.itemconfigure(picker_window, width=event.width)
-
-        picker_content.bind("<Configure>", update_picker_scroll_region)
-        picker_canvas.bind("<Configure>", resize_picker_canvas_window)
-        picker_window = picker_canvas.create_window((0, 0), window=picker_content, anchor="nw")
-
-        current_value = self.preference_value_vars[pref_index].get().strip()
-        selected_value = tk.StringVar(value=current_value)
-
-        button_row = ttk.Frame(dialog, padding=16)
-        button_row.grid(row=2, column=0, sticky="e")
-
-        def apply_selection(_event: tk.Event | None = None) -> str | None:
-            value = selected_value.get().strip()
-            if not value:
-                return "break"
-            self.preference_value_vars[pref_index].set(value)
-            self.on_preference_changed()
-            dialog.destroy()
-            return "break"
-
-        for index, group_name in enumerate(group_names):
-            row_button = ttk.Button(
-                picker_content,
-                text=group_name,
-                command=lambda current_name=group_name: selected_value.set(current_name),
-            )
-            row_button.grid(row=index, column=0, sticky="ew", pady=2)
-            if group_name == current_value:
-                row_button.state(["pressed"])
-                picker_canvas.after(0, lambda current_index=index: picker_canvas.yview_moveto(max(current_index / max(len(group_names), 1), 0.0)))
-
-        self.bind_mousewheel_redirect_recursive(picker_content, picker_canvas)
-
-        ttk.Button(button_row, text="Abbrechen", command=dialog.destroy).grid(row=0, column=0, padx=(0, 8))
-        ttk.Button(button_row, text="Übernehmen", command=lambda: apply_selection(), style="Accent.TButton").grid(
-            row=0, column=1
-        )
-
     def refresh_preference_views(self) -> None:
         if self.preference_listbox is None:
             return
@@ -920,21 +836,21 @@ class PrefmatchUI:
         )
 
         self.preference_value_vars = []
-        self.preference_buttons = []
         group_display_values = self.group_display_values(group_names)
         for pref in range(preference_count):
             ttk.Label(editor_content, text=f"Präferenz {pref + 1}", style="Header.TLabel").grid(
                 row=pref + 1, column=0, sticky="w", padx=(0, 12), pady=6
             )
             value_var = tk.StringVar()
-            button = ttk.Button(
+            option_menu = ttk.OptionMenu(
                 editor_content,
-                textvariable=value_var,
-                command=lambda current_pref=pref: self.open_preference_picker(current_pref),
+                value_var,
+                group_display_values[min(pref, len(group_display_values) - 1)],
+                *group_display_values,
+                command=lambda _value, self=self: self.on_preference_changed(),
             )
-            button.grid(row=pref + 1, column=1, sticky="ew", pady=6)
+            option_menu.grid(row=pref + 1, column=1, sticky="ew", pady=6)
             self.preference_value_vars.append(value_var)
-            self.preference_buttons.append(button)
 
         if self.preference_editor_canvas is not None:
             self.bind_mousewheel_redirect_recursive(editor_content, self.preference_editor_canvas)
