@@ -42,6 +42,7 @@ class PrefmatchUI:
         self.autosave_check_label: ttk.Label | None = None
         self.preference_editor_canvas: tk.Canvas | None = None
         self.preference_editor_canvas_window: int | None = None
+        self.preference_editor_content: ttk.Frame | None = None
         self.mousewheel_tag_counter = 0
         self.active_mousewheel_target: tk.Widget | None = None
 
@@ -293,6 +294,35 @@ class PrefmatchUI:
         self.root.bind_all("<Button-4>", self.on_global_mousewheel, add="+")
         self.root.bind_all("<Button-5>", self.on_global_mousewheel, add="+")
 
+    def is_descendant(self, widget: tk.Widget | None, ancestor: tk.Widget | None) -> bool:
+        current = widget
+        while current is not None:
+            if current is ancestor:
+                return True
+            parent_name = current.winfo_parent()
+            if not parent_name:
+                break
+            try:
+                current = current.nametowidget(parent_name)
+            except KeyError:
+                break
+        return False
+
+    def find_mousewheel_target(self) -> tk.Widget | None:
+        hovered_widget = self.root.winfo_containing(self.root.winfo_pointerx(), self.root.winfo_pointery())
+
+        if self.is_descendant(hovered_widget, self.preference_editor_content) or self.is_descendant(
+            hovered_widget, self.preference_editor_canvas
+        ):
+            return self.preference_editor_canvas
+        if self.is_descendant(hovered_widget, self.preference_listbox):
+            return self.preference_listbox
+        if self.is_descendant(hovered_widget, self.person_name_listbox):
+            return self.person_name_listbox
+        if self.is_descendant(hovered_widget, self.group_name_listbox):
+            return self.group_name_listbox
+        return self.active_mousewheel_target
+
     def set_active_mousewheel_target(self, target: tk.Widget) -> None:
         self.active_mousewheel_target = target
 
@@ -301,9 +331,10 @@ class PrefmatchUI:
             self.active_mousewheel_target = None
 
     def on_global_mousewheel(self, event: tk.Event) -> str | None:
-        if self.active_mousewheel_target is None:
+        target = self.find_mousewheel_target()
+        if target is None:
             return None
-        return self.on_mousewheel_target(event, self.active_mousewheel_target)
+        return self.on_mousewheel_target(event, target)
 
     def on_mousewheel_target(self, event: tk.Event, target: tk.Widget) -> str:
         if not target.winfo_exists():
@@ -796,6 +827,7 @@ class PrefmatchUI:
         self.bind_mousewheel_redirect(self.preference_editor_canvas, self.preference_editor_canvas)
 
         editor_content = ttk.Frame(self.preference_editor_canvas, style="Surface.TFrame")
+        self.preference_editor_content = editor_content
         editor_content.columnconfigure(1, weight=1)
         editor_content.bind("<Configure>", self.update_preference_editor_scroll_region)
         self.preference_editor_canvas.bind("<Configure>", self.resize_preference_editor_canvas_window)
