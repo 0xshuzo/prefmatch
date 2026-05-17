@@ -270,6 +270,33 @@ class PrefmatchUI:
         if self.preference_editor_canvas is not None and self.preference_editor_canvas_window is not None:
             self.preference_editor_canvas.itemconfigure(self.preference_editor_canvas_window, width=event.width)
 
+    def on_preference_editor_mousewheel(self, event: tk.Event) -> str:
+        if self.preference_editor_canvas is None:
+            return "break"
+
+        if getattr(event, "num", None) == 4:
+            delta = -1
+        elif getattr(event, "num", None) == 5:
+            delta = 1
+        else:
+            raw_delta = getattr(event, "delta", 0)
+            if raw_delta == 0:
+                return "break"
+
+            if sys.platform == "darwin":
+                delta = -int(raw_delta)
+                if delta == 0:
+                    delta = -1 if raw_delta > 0 else 1
+            elif sys.platform.startswith("win"):
+                delta = -int(raw_delta / 120)
+                if delta == 0:
+                    delta = -1 if raw_delta > 0 else 1
+            else:
+                delta = -1 if raw_delta > 0 else 1
+
+        self.preference_editor_canvas.yview_scroll(delta, "units")
+        return "break"
+
     def read_dimensions(self) -> tuple[int, int, int, int]:
         person_count = self.parse_positive_int(self.person_count_var.get(), "Personen")
         group_count = self.parse_positive_int(self.group_count_var.get(), "Gruppen")
@@ -734,6 +761,9 @@ class PrefmatchUI:
             )
             combo.grid(row=pref + 1, column=1, sticky="ew", pady=6)
             combo.bind("<<ComboboxSelected>>", self.on_preference_changed)
+            combo.bind("<MouseWheel>", self.on_preference_editor_mousewheel)
+            combo.bind("<Button-4>", self.on_preference_editor_mousewheel)
+            combo.bind("<Button-5>", self.on_preference_editor_mousewheel)
             self.preference_widgets.append(combo)
 
         self.selected_person_index = min(self.selected_person_index, max(0, len(person_names) - 1))
