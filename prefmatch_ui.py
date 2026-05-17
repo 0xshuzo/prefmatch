@@ -44,7 +44,8 @@ class PrefmatchUI:
 
     def configure_style(self) -> None:
         available_themes = set(self.style.theme_names())
-        if sys.platform == "darwin" and "aqua" in available_themes:
+        is_macos = sys.platform == "darwin"
+        if is_macos and "aqua" in available_themes:
             self.style.theme_use("aqua")
         elif "clam" in available_themes:
             self.style.theme_use("clam")
@@ -68,19 +69,25 @@ class PrefmatchUI:
         self.style.configure("Header.TLabel", background=card_background, foreground=muted, font=("SF Pro Text", 11, "bold"))
         self.style.configure("TEntry", padding=8)
         self.style.configure("TCombobox", padding=6)
-        self.style.configure(
-            "Accent.TButton",
-            padding=(14, 10),
-            foreground="#ffffff",
-            background=accent,
-            borderwidth=0,
-            focusthickness=0,
-        )
-        self.style.map(
-            "Accent.TButton",
-            background=[("active", "#115e59"), ("pressed", "#134e4a")],
-            foreground=[("disabled", "#d1d5db")],
-        )
+        self.style.configure("TButton", padding=(12, 8))
+
+        if is_macos:
+            # Aqua buttons render more reliably when native colors are left alone.
+            self.style.configure("Accent.TButton", padding=(16, 10), font=("SF Pro Text", 13, "bold"))
+        else:
+            self.style.configure(
+                "Accent.TButton",
+                padding=(14, 10),
+                foreground="#ffffff",
+                background=accent,
+                borderwidth=0,
+                focusthickness=0,
+            )
+            self.style.map(
+                "Accent.TButton",
+                background=[("active", "#115e59"), ("pressed", "#134e4a")],
+                foreground=[("disabled", "#d1d5db")],
+            )
 
     def build_layout(self) -> None:
         self.root.columnconfigure(0, weight=1)
