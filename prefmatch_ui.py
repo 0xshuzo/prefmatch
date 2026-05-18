@@ -50,7 +50,7 @@ class PrefmatchUI:
         self.build_layout()
         self.bind_autosave()
         self.bind_global_mousewheel()
-        self.rebuild_forms()
+        self.load_initial_configuration()
 
     def configure_style(self) -> None:
         available_themes = set(self.style.theme_names())
@@ -263,6 +263,18 @@ class PrefmatchUI:
         except OSError:
             pass
         self.set_autosave_status(saved=True)
+
+    def load_initial_configuration(self) -> None:
+        autosave_file = self.autosave_path()
+        if not autosave_file.exists():
+            self.rebuild_forms()
+            return
+
+        try:
+            config = json.loads(autosave_file.read_text(encoding="utf-8"))
+            self.apply_configuration(config)
+        except (OSError, json.JSONDecodeError, ValueError):
+            self.rebuild_forms()
 
     def parse_positive_int(self, value: str, field_name: str) -> int:
         try:
