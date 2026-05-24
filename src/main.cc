@@ -10,6 +10,7 @@
 #include <tuple>
 #include <unordered_map>
 #include <vector>
+#include <utility>
 
 using u64 = uint64_t;
 
@@ -31,7 +32,7 @@ struct CompressedGraphData {
 	vecvec capacity;
 	costvecvec cost;
 	std::vector<u64> source_class_edges;
-	std::vector<std::vector<u64>> class_group_edges;
+	std::vector<std::vector<std::pair<u64,u64>>> class_group_edges;
 };
 
 void add_edge(vecvec &head, revvecvec &rev, boolvecvec &is_forward,
@@ -100,14 +101,8 @@ ParsedPreferences parse_preferences(const std::string &encoded_preferences,
 	parsed.weights.reserve(person_count);
 
 	for (u64 person = 0; person < person_count; ++person) {
-		const std::vector<std::string> preference_entries =
-		    split(person_entries[person], ',');
-		if (preference_entries.size() != preference_count) {
-			std::cerr << "Expected " << preference_count
-			          << " preferences for person " << person << ", got "
-			          << preference_entries.size() << ".\n";
-			std::exit(1);
-		}
+
+		const std::vector<std::string> preference_entries = split(person_entries[person], ',');
 
 		std::vector<bool> seen_groups(group_count, false);
 		std::vector<bool> seen_weights(preference_count + 1, false);
@@ -116,33 +111,39 @@ ParsedPreferences parse_preferences(const std::string &encoded_preferences,
 		person_groups.reserve(preference_count);
 		person_weights.reserve(preference_count);
 
-		for (u64 rank = 0; rank < preference_count; ++rank) {
+		// Take up to preference_count provided entries
+		const u64 provided = static_cast<u64>(preference_entries.size());
+		const u64 use_count = std::min(provided, preference_count);
+
+		for (u64 rank = 0; rank < use_count; ++rank) {
 			const u64 group = parse_u64(preference_entries[rank], "preference");
 			const u64 weight = rank + 1;
 
 			if (group >= group_count) {
 				std::cerr << "Invalid group " << group << " for person "
-				          << person << ". Allowed values are 0 to "
-				          << (group_count - 1) << ".\n";
+						  << person << ". Allowed values are 0 to "
+						  << (group_count - 1) << ".\n";
 				std::exit(1);
 			}
 			if (seen_groups[group]) {
 				std::cerr << "Duplicate preference for group " << group
-				          << " in person " << person << ".\n";
-				std::exit(1);
-			}
-			if (weight == 0 || weight > preference_count ||
-			    seen_weights[weight]) {
-				std::cerr << "Invalid or duplicate weight " << weight
-				          << " in person " << person << ".\n";
+						  << " in person " << person << ".\n";
 				std::exit(1);
 			}
 
 			seen_groups[group] = true;
+			if (weight == 0 || weight > preference_count || seen_weights[weight]) {
+				std::cerr << "Invalid or duplicate weight " << weight
+						  << " in person " << person << ".\n";
+				std::exit(1);
+			}
 			seen_weights[weight] = true;
 			person_groups.push_back(group);
 			person_weights.push_back(weight);
 		}
+
+		// If fewer than preference_count were provided, do NOT artificially pad.
+		// We accept variable-length preference lists (up to preference_count).
 
 		parsed.groups.push_back(person_groups);
 		parsed.weights.push_back(person_weights);
@@ -224,30 +225,28 @@ CompressedGraphData build_compressed_graph(const CompressedPreferences &compress
 	data.source_class_edges.resize(class_count);
 	data.class_group_edges.resize(class_count);
 
-	u64 next_edge_index = 0;
-
 	for (u64 group = 0; group < group_count; ++group) {
 		const u64 group_node = 2 + class_count + group;
 		add_edge(data.head, data.rev, data.is_forward, data.capacity, data.cost,
-		         group_node, 1, persons_per_group, 0);
-		next_edge_index += 2;
+				 group_node, 1, persons_per_group, 0);
 	}
 
 	for (u64 class_index = 0; class_index < class_count; ++class_index) {
 		const u64 class_node = 2 + class_index;
-		data.source_class_edges[class_index] = next_edge_index;
+		// record source->class edge local position
+		data.source_class_edges[class_index] = data.head[0].size();
 		add_edge(data.head, data.rev, data.is_forward, data.capacity, data.cost,
-		         0, class_node, compressed.class_persons[class_index].size(), 0);
-		next_edge_index += 2;
+				 0, class_node, compressed.class_persons[class_index].size(), 0);
 
 		for (u64 pref = 0; pref < compressed.class_preferences[class_index].size(); ++pref) {
 			const u64 group_node = 2 + class_count + compressed.class_preferences[class_index][pref];
-			data.class_group_edges[class_index].push_back(next_edge_index);
+			// the forward edge we just added lives at the end of data.head[class_node]
 			add_edge(data.head, data.rev, data.is_forward, data.capacity, data.cost,
-			         class_node, group_node,
-			         compressed.class_persons[class_index].size(),
-			         static_cast<i64>(pref + 1));
-			next_edge_index += 2;
+					 class_node, group_node,
+					 compressed.class_persons[class_index].size(),
+					 static_cast<i64>(pref + 1));
+			const u64 local_index = data.head[class_node].size() - 1;
+			data.class_group_edges[class_index].emplace_back(class_node, local_index);
 		}
 	}
 
@@ -278,6 +277,11 @@ int main(int argc, char **argv) {
 	                       graph_data.capacity, graph_data.cost);
 	auto [flow, cost_ges] = assignment_graph.successive_shortest_paths_with_potentials(0, 1, person_count);
 
+	// Build prefix sums of head sizes to translate (node, local_index) -> global edge index
+	std::vector<u64> head_prefix(graph_data.head.size() + 1, 0);
+	for (u64 i = 0; i < graph_data.head.size(); ++i)
+		head_prefix[i + 1] = head_prefix[i] + static_cast<u64>(graph_data.head[i].size());
+
 	std::vector<u64> final_assignment(person_count, std::numeric_limits<u64>::max());
 	std::vector<u64> group_usage(group_count, 0);
 	std::vector<u64> leftover_persons;
@@ -288,7 +292,11 @@ int main(int argc, char **argv) {
 		u64 cursor = 0;
 
 		for (u64 pref = 0; pref < compressed.class_preferences[class_index].size(); ++pref) {
-			const u64 assigned_count = flow[graph_data.class_group_edges[class_index][pref]];
+			auto edge_desc = graph_data.class_group_edges[class_index][pref];
+			const u64 from_node = edge_desc.first;
+			const u64 local_index = edge_desc.second;
+			const u64 global_edge_index = head_prefix[from_node] + local_index;
+			const u64 assigned_count = flow[global_edge_index];
 			const u64 group = compressed.class_preferences[class_index][pref];
 
 			for (u64 offset = 0; offset < assigned_count && cursor < persons.size(); ++offset) {

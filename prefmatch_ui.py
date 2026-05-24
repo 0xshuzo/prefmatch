@@ -657,7 +657,6 @@ class PrefmatchUI:
         old_rows: list[list[int]],
     ) -> list[list[int]]:
         rows: list[list[int]] = []
-        default_row = list(range(preference_count))
 
         for person in range(person_count):
             source_row = old_rows[person] if person < len(old_rows) else []
@@ -671,13 +670,7 @@ class PrefmatchUI:
                 if len(normalized_row) == preference_count:
                     break
 
-            for group_index in default_row:
-                if group_index not in seen:
-                    normalized_row.append(group_index)
-                    seen.add(group_index)
-                if len(normalized_row) == preference_count:
-                    break
-
+            # Do not pad missing preferences; keep variable-length rows as-is.
             rows.append(normalized_row)
 
         return rows
