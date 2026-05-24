@@ -2,11 +2,13 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <exception>
 #include <iostream>
 #include <limits>
 #include <string>
 #include <tuple>
+#include <unordered_map>
 #include <vector>
 
 using u64 = uint64_t;
@@ -14,6 +16,22 @@ using u64 = uint64_t;
 struct ParsedPreferences {
 	vecvec groups;
 	vecvec weights;
+};
+
+struct CompressedPreferences {
+	std::vector<std::vector<u64>> class_persons;
+	std::vector<std::vector<u64>> class_preferences;
+	std::vector<u64> person_to_class;
+};
+
+struct CompressedGraphData {
+	vecvec head;
+	revvecvec rev;
+	boolvecvec is_forward;
+	vecvec capacity;
+	costvecvec cost;
+	std::vector<u64> source_class_edges;
+	std::vector<std::vector<u64>> class_group_edges;
 };
 
 void add_edge(vecvec &head, revvecvec &rev, boolvecvec &is_forward,
@@ -163,27 +181,77 @@ build_vectors(u64 person_count, u64 group_count, u64 persons_per_group,
 	return {head, rev, is_forward, capacity, cost};
 }
 
-void complete_person_group_edges(vecvec &head, revvecvec &rev, boolvecvec &is_forward, vecvec &capacity,
-                                 costvecvec &cost, u64 person_count,
-                                 u64 group_count, i64 fallback_cost) {
-	for (u64 person = 0; person < person_count; ++person) {
-		const u64 person_node = person + group_count + 2;
-		std::vector<bool> connected(group_count, false);
+CompressedPreferences compress_preferences(const ParsedPreferences &preferences) {
+	CompressedPreferences compressed;
+	const u64 person_count = preferences.groups.size();
+	compressed.person_to_class.resize(person_count);
 
-		for (u64 edge_pos = 0; edge_pos < head[person_node].size(); ++edge_pos) {
-			const u64 target = head[person_node][edge_pos];
-			if (target >= 2 && target < group_count + 2)
-				connected[target - 2] = true;
+	std::unordered_map<std::string, u64> class_by_key;
+
+	for (u64 person = 0; person < person_count; ++person) {
+		std::string key;
+		for (u64 group : preferences.groups[person]) {
+			key.append(std::to_string(group));
+			key.push_back(',');
 		}
 
-		for (u64 group = 0; group < group_count; ++group) {
-			if (!connected[group]) {
-				const u64 group_node = group + 2;
-				add_edge(head, rev, is_forward, capacity, cost, person_node, group_node, 1,
-				         fallback_cost);
-			}
+		auto [it, inserted] = class_by_key.emplace(key, static_cast<u64>(compressed.class_persons.size()));
+		const u64 class_index = it->second;
+
+		if (inserted) {
+			compressed.class_persons.emplace_back();
+			compressed.class_preferences.push_back(preferences.groups[person]);
+		}
+
+		compressed.class_persons[class_index].push_back(person);
+		compressed.person_to_class[person] = class_index;
+	}
+
+	return compressed;
+}
+
+CompressedGraphData build_compressed_graph(const CompressedPreferences &compressed,
+                                           u64 group_count, u64 persons_per_group) {
+	const u64 class_count = compressed.class_preferences.size();
+	const u64 num_nodes = class_count + group_count + 2;
+
+	CompressedGraphData data;
+	data.head.resize(num_nodes);
+	data.rev.resize(num_nodes);
+	data.is_forward.resize(num_nodes);
+	data.capacity.resize(num_nodes);
+	data.cost.resize(num_nodes);
+	data.source_class_edges.resize(class_count);
+	data.class_group_edges.resize(class_count);
+
+	u64 next_edge_index = 0;
+
+	for (u64 group = 0; group < group_count; ++group) {
+		const u64 group_node = 2 + class_count + group;
+		add_edge(data.head, data.rev, data.is_forward, data.capacity, data.cost,
+		         group_node, 1, persons_per_group, 0);
+		next_edge_index += 2;
+	}
+
+	for (u64 class_index = 0; class_index < class_count; ++class_index) {
+		const u64 class_node = 2 + class_index;
+		data.source_class_edges[class_index] = next_edge_index;
+		add_edge(data.head, data.rev, data.is_forward, data.capacity, data.cost,
+		         0, class_node, compressed.class_persons[class_index].size(), 0);
+		next_edge_index += 2;
+
+		for (u64 pref = 0; pref < compressed.class_preferences[class_index].size(); ++pref) {
+			const u64 group_node = 2 + class_count + compressed.class_preferences[class_index][pref];
+			data.class_group_edges[class_index].push_back(next_edge_index);
+			add_edge(data.head, data.rev, data.is_forward, data.capacity, data.cost,
+			         class_node, group_node,
+			         compressed.class_persons[class_index].size(),
+			         static_cast<i64>(pref + 1));
+			next_edge_index += 2;
 		}
 	}
+
+	return data;
 }
 
 int main(int argc, char **argv) {
@@ -202,32 +270,83 @@ int main(int argc, char **argv) {
 
 	const ParsedPreferences preferences =
 	    parse_preferences(argv[5], person_count, group_count, preference_count);
+	const CompressedPreferences compressed = compress_preferences(preferences);
+	const CompressedGraphData graph_data =
+	    build_compressed_graph(compressed, group_count, persons_per_group);
 
-	auto [head, rev, is_forward, capacity, cost] = build_vectors(person_count, group_count,
-	                                                             persons_per_group, preferences);
+	Graph assignment_graph(graph_data.head, graph_data.rev, graph_data.is_forward,
+	                       graph_data.capacity, graph_data.cost);
+	auto [flow, cost_ges] = assignment_graph.successive_shortest_paths_with_potentials(0, 1, person_count);
 
-	Graph feasibility_graph(head, rev, is_forward, capacity, cost);
-	const u64 max_flow = feasibility_graph.preflow_push(0, 1);
+	std::vector<u64> final_assignment(person_count, std::numeric_limits<u64>::max());
+	std::vector<u64> group_usage(group_count, 0);
+	std::vector<u64> leftover_persons;
+	leftover_persons.reserve(person_count);
 
-	if (max_flow < person_count) {
-		complete_person_group_edges(head, rev, is_forward, capacity, cost, person_count,
-		                            group_count,
-		                            static_cast<i64>(person_count * preference_count + 1));
+	for (u64 class_index = 0; class_index < compressed.class_persons.size(); ++class_index) {
+		const std::vector<u64> &persons = compressed.class_persons[class_index];
+		u64 cursor = 0;
+
+		for (u64 pref = 0; pref < compressed.class_preferences[class_index].size(); ++pref) {
+			const u64 assigned_count = flow[graph_data.class_group_edges[class_index][pref]];
+			const u64 group = compressed.class_preferences[class_index][pref];
+
+			for (u64 offset = 0; offset < assigned_count && cursor < persons.size(); ++offset) {
+				const u64 person = persons[cursor++];
+				final_assignment[person] = group;
+				++group_usage[group];
+			}
+		}
+
+		for (; cursor < persons.size(); ++cursor) {
+			leftover_persons.push_back(persons[cursor]);
+		}
 	}
 
-	Graph assignment_graph(head, rev, is_forward, capacity, cost);
-	auto [flow, cost_ges] = assignment_graph.successive_shortest_paths_with_potentials(0, 1, person_count);
-	const std::vector<u64> assignment =
-	    assignment_graph.extract_assignment(flow, person_count, group_count);
+	std::vector<u64> remaining_slots(group_count, persons_per_group);
+	for (u64 group = 0; group < group_count; ++group) {
+		remaining_slots[group] -= group_usage[group];
+	}
 
-	std::printf("MAX_FLOW %llu\n", static_cast<unsigned long long>(max_flow));
+	for (u64 person : leftover_persons) {
+		for (u64 group = 0; group < group_count; ++group) {
+			if (remaining_slots[group] == 0)
+				continue;
+
+			final_assignment[person] = group;
+			--remaining_slots[group];
+			break;
+		}
+	}
+
+	for (u64 person = 0; person < person_count; ++person) {
+		if (final_assignment[person] == std::numeric_limits<u64>::max()) {
+			std::cerr << "Could not assign person " << person << ".\n";
+			return 1;
+		}
+	}
+
+	u64 preferred_assignments = 0;
+	for (u64 person = 0; person < person_count; ++person) {
+		const u64 assigned_group = final_assignment[person];
+		for (u64 preference : preferences.groups[person]) {
+			if (preference == assigned_group) {
+				++preferred_assignments;
+				break;
+			}
+		}
+	}
+
+	std::fprintf(stderr, "PROGRESS %llu %llu\n",
+	             static_cast<unsigned long long>(person_count),
+	             static_cast<unsigned long long>(person_count));
+
+	std::printf("MAX_FLOW %llu\n", static_cast<unsigned long long>(preferred_assignments));
 	std::printf("TOTAL_COST %lld\n", static_cast<long long>(cost_ges));
 	for (u64 person = 0; person < person_count; ++person) {
-		if (assignment[person] != std::numeric_limits<u64>::max()) {
-			std::printf("ASSIGNMENT %llu %llu\n",
-			            static_cast<unsigned long long>(person),
-			            static_cast<unsigned long long>(assignment[person]));
-		}
+		std::printf("ASSIGNMENT %llu %llu\n",
+		            static_cast<unsigned long long>(person),
+		            static_cast<unsigned long long>(final_assignment[person]));
 	}
 
 	return 0;

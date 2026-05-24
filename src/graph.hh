@@ -16,8 +16,6 @@ class Graph {
 		std::vector<i64> dist;
 		std::vector<u64> parent_edge;
 		std::vector<bool> reached;
-		std::vector<u64> reached_nodes;
-		std::vector<u64> shortest_path;
 		u64 path_capacity;
 		bool path_found;
 	};
@@ -32,7 +30,7 @@ class Graph {
 	void construct_from_vecvec(const vecvec& head, const revvecvec& rev, const boolvecvec& is_forward, const vecvec& capacity, const costvecvec& cost);
 	u64 node_count();
 	u64 edge_count();
-	DijkstraResult dijkstra(u64 s, u64 t, const std::vector<i64>& reduced_cost);
+	DijkstraResult dijkstra(u64 s, u64 t, const std::vector<i64>& potential);
 	void discharge(u64 u, u64 s, u64 t, std::vector<u64>& height, std::vector<i64>& excess, std::vector<u64>&current, std::queue<u64>& active);
 	void push_flow(u64 u, u64 v, u64 e, u64 s, u64 t, std::vector<i64>& excess, std::queue<u64>& active);
 	
@@ -42,5 +40,5 @@ public:
 
 	u64 preflow_push(u64 s, u64 t);
 	std::pair<std::vector<u64>, i64> successive_shortest_paths_with_potentials(u64 s, u64 t, u64 flow_to_meet);
-	std::vector<u64> extract_assignment(const std::vector<u64>& flow, u64 person_count, u64 group_count);
+	std::vector<u64> extract_assignment(u64 person_count, u64 group_count);
 };

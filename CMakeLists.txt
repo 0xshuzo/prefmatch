@@ -19,6 +19,11 @@ target_include_directories(prefmatch
 		${PROJECT_SOURCE_DIR}/src
 )
 
+add_custom_command(TARGET prefmatch POST_BUILD
+	COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:prefmatch> ${PROJECT_SOURCE_DIR}/prefmatch
+	COMMENT "Copying prefmatch binary to project root"
+)
+
 if(MSVC)
 	target_compile_options(prefmatch PRIVATE /W4)
 else()

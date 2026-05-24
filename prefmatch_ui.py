@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import threading
 import tkinter as tk
 import zipfile
 from pathlib import Path
@@ -40,6 +41,11 @@ class PrefmatchUI:
         self.autosave_status_var = tk.StringVar(value="Gespeichert")
         self.autosave_spinner: ttk.Progressbar | None = None
         self.autosave_check_label: ttk.Label | None = None
+        self.run_button: ttk.Button | None = None
+        self.assignment_progress_var = tk.IntVar(value=0)
+        self.assignment_status_var = tk.StringVar(value="Bereit")
+        self.assignment_progressbar: ttk.Progressbar | None = None
+        self.assignment_running = False
         self.preference_editor_canvas: tk.Canvas | None = None
         self.preference_editor_canvas_window: int | None = None
         self.preference_editor_content: ttk.Frame | None = None
@@ -182,8 +188,23 @@ class PrefmatchUI:
         )
         self.autosave_label.grid(row=0, column=1, sticky="w", padx=(8, 0))
 
-        run_button = ttk.Button(run_frame, text="Zuordnung finden", command=self.run_program, style="Accent.TButton")
-        run_button.grid(row=0, column=1, sticky="e")
+        self.run_button = ttk.Button(run_frame, text="Zuordnung finden", command=self.run_program, style="Accent.TButton")
+        self.run_button.grid(row=0, column=1, sticky="e")
+
+        assignment_status_label = ttk.Label(
+            run_frame,
+            textvariable=self.assignment_status_var,
+            style="Section.TLabel",
+        )
+        assignment_status_label.grid(row=1, column=0, columnspan=2, sticky="w", pady=(8, 2))
+
+        self.assignment_progressbar = ttk.Progressbar(
+            run_frame,
+            mode="determinate",
+            maximum=100,
+            variable=self.assignment_progress_var,
+        )
+        self.assignment_progressbar.grid(row=2, column=0, columnspan=2, sticky="ew")
 
         footer_label = ttk.Label(
             self.root,
@@ -881,6 +902,7 @@ class PrefmatchUI:
 
     def encode_preferences(self) -> str:
         self.sync_current_preferences_from_editor()
+        preference_count = self.parse_positive_int(self.preference_count_var.get(), "Präferenzen pro Person")
         person_names = self.collect_person_names()
         group_names = self.collect_group_names()
         encoded_rows: list[str] = []
@@ -889,10 +911,10 @@ class PrefmatchUI:
             seen: set[int] = set()
             entries: list[str] = []
 
-            if len(row) == 0:
+            if len(row) < preference_count:
                 raise ValueError(f"Für {person_names[person]} wurden keine Präferenzen angegeben.")
 
-            for pref, group_id in enumerate(row):
+            for pref, group_id in enumerate(row[:preference_count]):
                 if group_id < 0 or group_id >= len(group_names):
                     raise ValueError(f"Ungültige Gruppen-ID in Präferenz von {person_names[person]}: {group_id}")
                 if group_id in seen:
@@ -907,13 +929,17 @@ class PrefmatchUI:
 
     def collect_preference_sets(self) -> list[set[int]]:
         self.sync_current_preferences_from_editor()
+        preference_count = self.parse_positive_int(self.preference_count_var.get(), "Präferenzen pro Person")
         person_names = self.collect_person_names()
         group_names = self.collect_group_names()
         preference_sets: list[set[int]] = []
 
         for person, row in enumerate(self.preference_rows):
+            if len(row) < preference_count:
+                raise ValueError(f"Für {person_names[person]} wurden keine Präferenzen angegeben.")
+
             person_preferences: set[int] = set()
-            for group_id in row:
+            for group_id in row[:preference_count]:
                 if group_id < 0 or group_id >= len(group_names):
                     raise ValueError(
                         f"Ungültige Gruppen-ID in Präferenz von {person_names[person]}: {group_id}"
@@ -926,19 +952,20 @@ class PrefmatchUI:
 
     def collect_preference_rows(self) -> list[list[int]]:
         self.sync_current_preferences_from_editor()
+        preference_count = self.parse_positive_int(self.preference_count_var.get(), "Präferenzen pro Person")
         person_names = self.collect_person_names()
         group_names = self.collect_group_names()
         preference_rows: list[list[int]] = []
 
         for person, row in enumerate(self.preference_rows):
-            if len(row) == 0:
+            if len(row) < preference_count:
                 raise ValueError(f"Für {person_names[person]} wurden keine Präferenzen angegeben.")
-            for group_id in row:
+            for group_id in row[:preference_count]:
                 if group_id < 0 or group_id >= len(group_names):
                     raise ValueError(
                         f"Ungültige Gruppen-ID in Präferenz von {person_names[person]}: {group_id}"
                     )
-            preference_rows.append(list(row))
+            preference_rows.append(list(row[:preference_count]))
 
         return preference_rows
 
@@ -1019,9 +1046,6 @@ class PrefmatchUI:
             raise ValueError("Anzahl der Gruppennamen passt nicht zur Gruppenanzahl.")
         if len(preference_rows) != person_count:
             raise ValueError("Anzahl der Präferenzzeilen passt nicht zur Personenanzahl.")
-        for row in preference_rows:
-            if len(row) != preference_count:
-                raise ValueError("Eine Präferenzzeile hat nicht die erwartete Länge.")
 
         self.person_count_var.set(str(person_count))
         self.group_count_var.set(str(group_count))
@@ -1042,6 +1066,153 @@ class PrefmatchUI:
         self.schedule_autosave()
     def binary_path(self) -> Path:
         return Path(__file__).resolve().parent / "prefmatch"
+
+    def start_assignment_run(self) -> None:
+        self.assignment_running = True
+        self.assignment_progress_var.set(0)
+        self.assignment_status_var.set("Zuordnung wird berechnet...")
+        if self.run_button is not None:
+            self.run_button.configure(state="disabled")
+
+    def update_assignment_progress(self, current: int, total: int) -> None:
+        if total <= 0:
+            total = 1
+
+        progress = max(0, min(100, int(round((current * 100) / total))))
+        self.assignment_progress_var.set(progress)
+        if progress < 100:
+            self.assignment_status_var.set(f"Zuordnung wird berechnet: {progress}%")
+
+    def run_assignment_worker(self, command: list[str], context: dict[str, object]) -> None:
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+
+        stdout_lines: list[str] = []
+        stderr_lines: list[str] = []
+
+        def read_stdout() -> None:
+            if process.stdout is None:
+                return
+            for line in process.stdout:
+                stdout_lines.append(line)
+
+        def read_stderr() -> None:
+            if process.stderr is None:
+                return
+            for line in process.stderr:
+                stderr_lines.append(line)
+                if line.startswith("PROGRESS "):
+                    parts = line.split()
+                    if len(parts) >= 3:
+                        try:
+                            current = int(parts[1])
+                            total = int(parts[2])
+                        except ValueError:
+                            continue
+                        self.root.after(
+                            0,
+                            lambda current=current, total=total: self.update_assignment_progress(current, total),
+                        )
+
+        stdout_thread = threading.Thread(target=read_stdout, daemon=True)
+        stderr_thread = threading.Thread(target=read_stderr, daemon=True)
+        stdout_thread.start()
+        stderr_thread.start()
+
+        returncode = process.wait()
+        stdout_thread.join()
+        stderr_thread.join()
+
+        stdout = "".join(stdout_lines)
+        stderr = "".join(stderr_lines)
+        self.root.after(
+            0,
+            lambda: self.finish_assignment_run(returncode, stdout, stderr, context),
+        )
+
+    def finish_assignment_run(
+        self,
+        returncode: int,
+        stdout: str,
+        stderr: str,
+        context: dict[str, object],
+    ) -> None:
+        self.assignment_running = False
+        if self.run_button is not None:
+            self.run_button.configure(state="normal")
+
+        if returncode != 0:
+            error_text = stderr.strip() or stdout.strip() or "Unbekannter Fehler."
+            messagebox.showerror("Fehler beim Ausführen", error_text)
+            self.assignment_status_var.set("Bereit")
+            return
+
+        output = stdout.strip()
+        if output == "":
+            self.assignment_progress_var.set(100)
+            self.assignment_status_var.set("Zuordnung abgeschlossen")
+            messagebox.showinfo("Erfolg", "Programm erfolgreich ausgeführt.")
+            return
+
+        try:
+            parsed = self.parse_program_output(output)
+        except ValueError:
+            self.assignment_progress_var.set(100)
+            self.assignment_status_var.set("Zuordnung abgeschlossen")
+            messagebox.showinfo("Erfolg", output)
+            return
+
+        max_flow = int(parsed["max_flow"])
+        assignments = parsed["assignments"]
+        person_names = context["person_names"]
+        group_names = context["group_names"]
+        preference_sets = context["preference_sets"]
+        person_count = int(context["person_count"])
+
+        assignment_rows: list[tuple[str, str, bool]] = []
+        preferred_assignments = 0
+
+        for person_index in range(person_count):
+            group_index = assignments.get(person_index)
+            if group_index is None:
+                messagebox.showerror("Fehler beim Ausführen", f"Keine Zuordnung für Person {person_index} erhalten.")
+                self.assignment_progress_var.set(100)
+                self.assignment_status_var.set("Bereit")
+                return
+
+            is_fallback = group_index not in preference_sets[person_index]
+            if not is_fallback:
+                preferred_assignments += 1
+
+            assignment_rows.append(
+                (
+                    person_names[person_index],
+                    group_names[group_index],
+                    is_fallback,
+                )
+            )
+
+        self.assignment_progress_var.set(100)
+        self.assignment_status_var.set("Zuordnung abgeschlossen")
+
+        if max_flow == person_count:
+            summary = (
+                "Es existiert eine vollständige Zuordnung.\n\n"
+                f"{preferred_assignments} von {person_count} Personen liegen in einer Wunschgruppe."
+            )
+        else:
+            summary = (
+                "Es existiert insgesamt keine vollständige Zuordnung.\n\n"
+                f"{preferred_assignments} von {person_count} Personen liegen in einer Wunschgruppe.\n"
+                "Die restlichen Personen wurden auf freie Kapazitäten verteilt."
+            )
+
+        self.show_result_window(summary, assignment_rows)
 
     def run_program(self) -> None:
         try:
@@ -1068,58 +1239,14 @@ class PrefmatchUI:
             preferences,
         ]
 
-        result = subprocess.run(command, capture_output=True, text=True)
-        if result.returncode == 0:
-            output = result.stdout.strip()
-            if output == "":
-                messagebox.showinfo("Erfolg", "Programm erfolgreich ausgeführt.")
-                return
-
-            try:
-                parsed = self.parse_program_output(output)
-            except ValueError:
-                messagebox.showinfo("Erfolg", output)
-                return
-
-            max_flow = parsed["max_flow"]
-            assignments = parsed["assignments"]
-
-            assigned_count = len(assignments)
-
-            if max_flow == person_count:
-                summary = (
-                    "Es existiert eine vollständige Zuordnung.\n\n"
-                    f"Zugeordnete Personen über Präferenzen: {max_flow} von {person_count}"
-                )
-            else:
-                if assigned_count == person_count:
-                    summary = (
-                        "Nicht alle Präferenzen können perfekt berücksichtigt werden.\n\n"
-                        f"Über reine Präferenzen zuordenbar: {max_flow} von {person_count}\n"
-                        "Die möglichst beste vollständige Zuordnung ist die nachfolgende."
-                    )
-                else:
-                    summary = (
-                        "Es existiert insgesamt keine vollständige Zuordnung.\n\n"
-                        f"Über reine Präferenzen zuordenbar: {max_flow} von {person_count}\n"
-                        f"Tatsächlich zugeordnet: {assigned_count} von {person_count}"
-                    )
-
-            assignment_rows: list[tuple[str, str, bool]] = []
-            for person_index in sorted(assignments):
-                group_index = assignments[person_index]
-                assignment_rows.append(
-                    (
-                        person_names[person_index],
-                        group_names[group_index],
-                        group_index not in preference_sets[person_index],
-                    )
-                )
-
-            self.show_result_window(summary, assignment_rows)
-        else:
-            error_text = result.stderr.strip() or result.stdout.strip() or "Unbekannter Fehler."
-            messagebox.showerror("Fehler beim Ausführen", error_text)
+        self.start_assignment_run()
+        context = {
+            "person_count": person_count,
+            "person_names": person_names,
+            "group_names": group_names,
+            "preference_sets": preference_sets,
+        }
+        threading.Thread(target=self.run_assignment_worker, args=(command, context), daemon=True).start()
 
     def show_result_window(
         self, summary: str, assignment_rows: list[tuple[str, str, bool]]

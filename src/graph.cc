@@ -1,9 +1,9 @@
 #include <algorithm>
 #include <cstddef>
-#include <graph.hh>
+#include "graph.hh"
+#include <cstdio>
 #include <limits>
 #include <queue>
-#include <functional>
 #include <utility>
 #include <vector>
 
@@ -60,7 +60,7 @@ u64 Graph::edge_count() {
 	return _head.size();
 }
 
-Graph::DijkstraResult Graph::dijkstra(u64 s, u64 t, const std::vector<i64>& reduced_cost) {
+Graph::DijkstraResult Graph::dijkstra(u64 s, u64 t, const std::vector<i64>& potential) {
 	const u64 n = node_count();
 	const i64 inf = std::numeric_limits<i64>::max();
 	const u64 invalid_edge = std::numeric_limits<u64>::max();
@@ -69,28 +69,27 @@ Graph::DijkstraResult Graph::dijkstra(u64 s, u64 t, const std::vector<i64>& redu
 		std::vector<i64>(n, inf),
 		std::vector<u64>(n, invalid_edge),
 		std::vector<bool>(n, false),
-		{},
-		{},
 		0,
 		false,
 	};
 
-	using QueueEntry = std::pair<i64, u64>;
-	std::priority_queue<QueueEntry, std::vector<QueueEntry>, std::greater<QueueEntry>>
-		pq;
-
 	result.dist[s] = 0;
-	pq.push({0, s});
 
-	while (!pq.empty()) {
-		const auto [dist_u, u] = pq.top();
-		pq.pop();
+	for (u64 step = 0; step < n; ++step) {
+		i64 best_dist = inf;
+		u64 u = invalid_edge;
 
-		if (result.reached[u])
-			continue;
+		for (u64 v = 0; v < n; ++v) {
+			if (!result.reached[v] && result.dist[v] < best_dist) {
+				best_dist = result.dist[v];
+				u = v;
+			}
+		}
+
+		if (u == invalid_edge || best_dist == inf)
+			break;
 
 		result.reached[u] = true;
-		result.reached_nodes.push_back(u);
 
 		if (u == t)
 			break;
@@ -100,12 +99,11 @@ Graph::DijkstraResult Graph::dijkstra(u64 s, u64 t, const std::vector<i64>& redu
 				continue;
 
 			const u64 v = _head[e];
-			const i64 candidate = dist_u + reduced_cost[e];
+			const i64 candidate = best_dist + _cost[e] + potential[u] - potential[v];
 
 			if (candidate < result.dist[v]) {
 				result.dist[v] = candidate;
 				result.parent_edge[v] = e;
-				pq.push({candidate, v});
 			}
 		}
 	}
@@ -116,19 +114,13 @@ Graph::DijkstraResult Graph::dijkstra(u64 s, u64 t, const std::vector<i64>& redu
 
 	result.path_found = true;
 	result.path_capacity = std::numeric_limits<u64>::max();
-
-	std::vector<u64> reversed_path;
 	u64 current = t;
-	reversed_path.push_back(current);
 
 	while (current != s) {
 		const u64 e = result.parent_edge[current];
 		result.path_capacity = std::min(result.path_capacity, _capacity[e]);
 		current = _head[_rev[e]];
-		reversed_path.push_back(current);
 	}
-
-	result.shortest_path.assign(reversed_path.rbegin(), reversed_path.rend());
 
 	return result;
 }
@@ -230,29 +222,25 @@ std::pair<std::vector<u64>, i64> Graph::successive_shortest_paths_with_potential
 	u64 m = edge_count();
 
 	std::vector<u64> flow(m, 0);
-	std::vector<u64> potential(n, 0);
-	std::vector<i64> reduced_cost(m, 0);
+	std::vector<i64> potential(n, 0);
 
 	u64 flow_ges = 0;
 	i64 cost_ges = 0;
 
-	while (flow_ges < flow_to_meet) {
-		for (u64 u = 0; u < n; ++u) {
-			const i64 potential_u = static_cast<i64>(potential[u]);
-			for (u64 e = _first_out[u]; e < _first_out[u + 1]; ++e) {
-				if (_capacity[e] == 0)
-					continue;
-				reduced_cost[e] = _cost[e] + potential_u -
-				                  static_cast<i64>(potential[_head[e]]);
-			}
-		}
+	std::fprintf(stderr, "PROGRESS %llu %llu\n",
+	             static_cast<unsigned long long>(0),
+	             static_cast<unsigned long long>(flow_to_meet));
+	std::fflush(stderr);
 
-		const DijkstraResult dijkstra_result = dijkstra(s, t, reduced_cost);
+	while (flow_ges < flow_to_meet) {
+		const DijkstraResult dijkstra_result = dijkstra(s, t, potential);
 		if (!dijkstra_result.path_found)
 			break;
 
-		for (const auto& v : dijkstra_result.reached_nodes) {
-			potential[v] += dijkstra_result.dist[v];
+		for (u64 v = 0; v < n; ++v) {
+			if (dijkstra_result.dist[v] != std::numeric_limits<i64>::max()) {
+				potential[v] += dijkstra_result.dist[v];
+			}
 		}
 
 		u64 delta = dijkstra_result.path_capacity;
@@ -278,13 +266,16 @@ std::pair<std::vector<u64>, i64> Graph::successive_shortest_paths_with_potential
 		}
 
 		flow_ges += delta;
+		std::fprintf(stderr, "PROGRESS %llu %llu\n",
+		             static_cast<unsigned long long>(flow_ges),
+		             static_cast<unsigned long long>(flow_to_meet));
+		std::fflush(stderr);
 	}
 
 	return {flow, cost_ges};
 }
 
-std::vector<u64> Graph::extract_assignment(const std::vector<u64>& flow, u64 person_count,
-                                           u64 group_count) {
+std::vector<u64> Graph::extract_assignment(u64 person_count, u64 group_count) {
 	std::vector<u64> assignment(person_count, std::numeric_limits<u64>::max());
 
 	for (u64 person = 0; person < person_count; ++person) {
@@ -294,7 +285,7 @@ std::vector<u64> Graph::extract_assignment(const std::vector<u64>& flow, u64 per
 			const u64 to = _head[e];
 			const bool is_group_edge = to >= 2 && to < group_count + 2;
 
-			if (_is_forward[e] && is_group_edge && flow[e] == 1) {
+			if (_is_forward[e] && is_group_edge && _capacity[e] == 0) {
 				assignment[person] = to - 2;
 				break;
 			}
